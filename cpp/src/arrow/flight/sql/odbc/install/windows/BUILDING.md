@@ -71,7 +71,8 @@ private artifact location:
 ```powershell
 Get-FileHash C:\src\arrow\build\cpp\Apache-Arrow-Flight-SQL-ODBC-25.0.1-win64.msi -Algorithm SHA256
 aws s3 cp C:\src\arrow\build\cpp\Apache-Arrow-Flight-SQL-ODBC-25.0.1-win64.msi `
-  s3://dremio-alliances/codex-artifacts/arrow-odbc/25.0.1/beccec0d0c451b7aa3e4530416ac431b3c035c69/
+  s3://dremio-alliances/codex-artifacts/arrow-odbc/25.0.1/beccec0d0c451b7aa3e4530416ac431b3c035c69/ `
+  --region us-west-2
 ```
 
 After confirming the upload and recording the SHA-256, terminate the host;
@@ -79,7 +80,8 @@ do not stop it and leave it allocated:
 
 ```bash
 aws s3api head-object --bucket dremio-alliances \
-  --key codex-artifacts/arrow-odbc/25.0.1/beccec0d0c451b7aa3e4530416ac431b3c035c69/Apache-Arrow-Flight-SQL-ODBC-25.0.1-win64.msi
+  --key codex-artifacts/arrow-odbc/25.0.1/beccec0d0c451b7aa3e4530416ac431b3c035c69/Apache-Arrow-Flight-SQL-ODBC-25.0.1-win64.msi \
+  --region us-west-2
 aws ec2 terminate-instances --instance-ids "$INSTANCE_ID"
 aws ec2 wait instance-terminated --instance-ids "$INSTANCE_ID"
 ```
@@ -142,3 +144,36 @@ The resulting installer is
 the x64 driver DLL and required Arrow runtime DLLs.  Sign the DLL before
 packaging and sign the MSI afterwards only when authorized code-signing
 credentials are available.
+
+## Windows smoke-test application
+
+`odbc_smoke_test.cc` is a minimal x64 ODBC client that connects using a
+connection string and runs `SELECT 1 AS odbc_smoke_test`.  On the build host,
+open an x64 Developer Command Prompt for Visual Studio 2022 and compile it:
+
+```cmd
+cl /std:c++17 /EHsc /W4 odbc_smoke_test.cc /link odbc32.lib /out:odbc_smoke_test.exe
+```
+
+After installing the MSI, first confirm that its ODBC registration includes
+non-empty `Driver` and `Setup` paths.  If either is empty, do not accept the
+installer: the Windows driver manager will return `IM002` before it loads the
+DLL.
+
+```powershell
+Get-ItemProperty 'HKLM:\SOFTWARE\ODBC\ODBCINST.INI\Apache Arrow Flight SQL ODBC Driver' |
+  Select-Object Driver, Setup, DriverODBCVer
+```
+
+Run it with a Dremio Flight SQL endpoint and a short-lived test credential. Do
+not put real passwords or tokens in this repository or command history.  For a
+TLS endpoint using a personal-access token, the connection string shape is:
+
+```cmd
+odbc_smoke_test.exe "driver={Apache Arrow Flight SQL ODBC Driver};host=<dremio-host>;port=32010;token=<short-lived-token>;useEncryption=true;useWideChar=true;"
+```
+
+For a Dremio deployment with a private CA, add
+`trustedCerts=C:\path\to\ca.pem;useSystemTrustStore=false`.  For a controlled
+non-production plaintext endpoint only, use `useEncryption=false`.  A passing
+test prints `Query succeeded; odbc_smoke_test=1`.
