@@ -5,6 +5,92 @@ This produces the unsigned Flight SQL ODBC MSI for commit
 Windows Server 2022 x64 machine with Visual Studio 2022 C++ Build Tools, Git
 for Windows (including Git Bash), CMake, Ninja, and WiX 6 installed.
 
+## AWS build host
+
+Use the Dremio Alliances AWS account (`812725540388`) only.  The build host
+used for this release was a disposable `c6i.2xlarge` Windows Server 2022
+instance.  It needs a subnet with outbound Internet access so it can download
+the build tools and dependencies.  Use an instance profile that permits AWS
+Systems Manager (SSM) core functionality and `s3:PutObject` to the approved
+artifact prefix; this avoids opening an inbound RDP port or distributing a key
+pair.
+
+From a workstation with an AWS CLI profile that targets that account, select a
+region, subnet, security group (outbound HTTPS only is sufficient), and an SSM
+instance-profile name.  The following creates a 100 GiB ephemeral build host
+and records its ID.  Replace the placeholder values before running it.
+
+```bash
+export AWS_PROFILE=<alliances-profile>
+export AWS_REGION=<region>
+export SUBNET_ID=<subnet-id>
+export SECURITY_GROUP_ID=<security-group-id>
+export INSTANCE_PROFILE=<ssm-instance-profile-name>
+
+aws sts get-caller-identity
+# Confirm that Account is 812725540388 before continuing.
+export AMI_ID="$(aws ssm get-parameter \
+  --name /aws/service/ami-windows-latest/Windows_Server-2022-English-Full-Base \
+  --query 'Parameter.Value' --output text)"
+export INSTANCE_ID="$(aws ec2 run-instances \
+  --image-id "$AMI_ID" --instance-type c6i.2xlarge \
+  --subnet-id "$SUBNET_ID" --security-group-ids "$SECURITY_GROUP_ID" \
+  --iam-instance-profile Name="$INSTANCE_PROFILE" \
+  --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=100,VolumeType=gp3,DeleteOnTermination=true}' \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=arrow-odbc-windows-build},{Key=Purpose,Value=ephemeral-build},{Key=Owner,Value=<owner>} ]' \
+  --query 'Instances[0].InstanceId' --output text)"
+echo "$INSTANCE_ID"
+aws ec2 wait instance-status-ok --instance-ids "$INSTANCE_ID"
+```
+
+Connect through Session Manager once the SSM agent is online:
+
+```bash
+aws ssm start-session --target "$INSTANCE_ID"
+```
+
+In the administrator PowerShell session, install the prerequisites.  Reboot
+when the Visual Studio installer requests it, reconnect with SSM, and rerun
+any command that did not complete.  Verify `git`, `cmake`, `ninja`, and `wix`
+are available before proceeding to the build steps below.
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+choco install -y git cmake ninja awscli
+choco install -y wixtoolset --version=6.0.2
+choco install -y visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --norestart"
+```
+
+The build needs substantial temporary space and may take several hours on its
+first run because vcpkg builds dependencies.  Keep the generated MSI outside
+the instance before teardown, for example by uploading it to the approved
+private artifact location:
+
+```powershell
+Get-FileHash C:\src\arrow\build\cpp\Apache-Arrow-Flight-SQL-ODBC-25.0.1-win64.msi -Algorithm SHA256
+aws s3 cp C:\src\arrow\build\cpp\Apache-Arrow-Flight-SQL-ODBC-25.0.1-win64.msi `
+  s3://dremio-alliances/codex-artifacts/arrow-odbc/25.0.1/beccec0d0c451b7aa3e4530416ac431b3c035c69/
+```
+
+After confirming the upload and recording the SHA-256, terminate the host;
+do not stop it and leave it allocated:
+
+```bash
+aws s3api head-object --bucket dremio-alliances \
+  --key codex-artifacts/arrow-odbc/25.0.1/beccec0d0c451b7aa3e4530416ac431b3c035c69/Apache-Arrow-Flight-SQL-ODBC-25.0.1-win64.msi
+aws ec2 terminate-instances --instance-ids "$INSTANCE_ID"
+aws ec2 wait instance-terminated --instance-ids "$INSTANCE_ID"
+```
+
+`DeleteOnTermination=true` removes the 100 GiB root volume.  Delete any
+dedicated security group, EBS snapshots, or temporary S3 artifact only when
+they were created for this build and are no longer needed; never delete a
+shared network resource or an approved retained release artifact.
+
+## Build and package
+
 1. Clone recursively and check out the exact source revision:
 
    ```powershell
