@@ -1,0 +1,20 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+03f1f9b360ab4c302087325953fae650975b5018122bf44ccd189274e92623db  Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-arm64.pkg
+76051afde996c4afdce6b9eda27d3934187994af64bb821964cab93b913c86f0  Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-x86_64.pkg
+735831e6430e7f6ff5c2624113895fb64729bc2399bf84a1b4f7a7817fd24718  libarrow_flight_sql_odbc.2500.1.0-macos-arm64.dylib
+f1794c625b05f2ef5e9748de168203f9bd78e2836c2ce4eb3e5637debfb0b193  libarrow_flight_sql_odbc.2500.1.0-macos-x86_64.dylib
