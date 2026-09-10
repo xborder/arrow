@@ -147,6 +147,36 @@ The ARM64 artifact carries OpenSSL statically. The validated x86_64 diagnostic
 artifact dynamically references Intel Homebrew OpenSSL 3 at
 `/usr/local/opt/openssl@3`; install that runtime before loading it.
 
+The DMG files are thin distribution wrappers around the corresponding PKG;
+double-click the PKG inside the mounted image to install the driver. CPack is
+configured by this repository to generate `productbuild` PKGs, not DMGs, so
+create the optional DMG after `cpack` with Apple's `hdiutil`:
+
+```sh
+BUILD_DIR=build/macos-arm64-release
+PKG="$BUILD_DIR/ArrowFlightSQLODBC-25.0.1.pkg"
+DMG_STAGE=$(mktemp -d /tmp/arrow-odbc-dmg.XXXXXX)
+trap 'rm -rf "$DMG_STAGE"' EXIT
+cp "$PKG" "$DMG_STAGE/"
+hdiutil create \
+  -volname "Arrow Flight SQL ODBC 25.0.1 arm64" \
+  -srcfolder "$DMG_STAGE" \
+  -format UDZO \
+  -ov \
+  "$BUILD_DIR/Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-arm64.dmg"
+```
+
+For Intel, use the x86_64 build directory and change the volume name and output
+file suffix to `x86_64`. Verify an image before distribution:
+
+```sh
+hdiutil attach -readonly -nobrowse "$BUILD_DIR/Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-arm64.dmg"
+hdiutil detach "/Volumes/Arrow Flight SQL ODBC 25.0.1 arm64"
+```
+
+The checked-in DMGs are generated this way. They are unsigned and are not a
+replacement for signing and notarizing the PKG for production distribution.
+
 Verify all four files from the repository root with:
 
 ```sh
