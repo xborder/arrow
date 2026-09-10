@@ -51,11 +51,15 @@ under Rosetta; do not mix `/opt/homebrew` ARM libraries into the Intel build.
 ## Check out the exact source
 
 ```sh
-git fetch --tags upstream
-git switch --detach beccec0d0c451b7aa3e4530416ac431b3c035c69
-test "$(git rev-parse HEAD)" = beccec0d0c451b7aa3e4530416ac431b3c035c69
-test "$(git describe --tags --exact-match HEAD)" = apache-arrow-25.0.1
+git fetch origin codex/arrow-25.0.1-macos-driver-artifacts
+git switch --detach origin/codex/arrow-25.0.1-macos-driver-artifacts
+git submodule update --init --recursive
+test "$(git merge-base HEAD beccec0d0c451b7aa3e4530416ac431b3c035c69)" = \
+  beccec0d0c451b7aa3e4530416ac431b3c035c69
 ```
+
+The branch contains the OpenSSL header-selection fix used by the validated
+artifacts. Checking out the release commit directly omits that fix.
 
 Use a new build directory for each architecture. The examples below use
 `build/macos-arm64-release`; replace it with `build/macos-x86_64-release` and
@@ -182,6 +186,98 @@ Verify all four files from the repository root with:
 ```sh
 shasum -a 256 -c ARTIFACTS.sha256
 ```
+
+## Sign and notarize for distribution
+
+Use a Developer ID Application identity for Mach-O code and the DMG, and a
+separate Developer ID Installer identity for the PKG. Confirm both identities
+in the login keychain before starting. Do not print or commit certificate
+private keys, App Store Connect passwords, or notarization tokens.
+
+```sh
+security find-identity -v -p codesigning
+security find-identity -v | grep 'Developer ID Installer'
+```
+
+Set these to the exact identity names shown by `security`:
+
+```sh
+APP_IDENTITY='Developer ID Application: Your Organization (TEAMID)'
+INSTALLER_IDENTITY='Developer ID Installer: Your Organization (TEAMID)'
+BUILD_DIR=build/macos-arm64-release
+DRIVER="$BUILD_DIR/release/libarrow_flight_sql_odbc.2500.1.0.dylib"
+UNSIGNED_PKG="$BUILD_DIR/ArrowFlightSQLODBC-25.0.1.pkg"
+SIGNED_PKG="$BUILD_DIR/ArrowFlightSQLODBC-25.0.1-signed.pkg"
+DMG="$BUILD_DIR/Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-arm64.dmg"
+```
+
+Sign the driver before CPack copies it into the installer. Sign any nested
+Mach-O dependencies from the inside out; this build's ARM64 driver has its
+non-system dependencies linked statically.
+
+```sh
+codesign --force --timestamp --options runtime \
+  --sign "$APP_IDENTITY" "$DRIVER"
+codesign --verify --strict --verbose=4 "$DRIVER"
+
+cmake --install "$BUILD_DIR"
+cpack --config "$BUILD_DIR/CPackConfig.cmake" -B "$BUILD_DIR"
+```
+
+Sign the generated flat installer with the Installer identity:
+
+```sh
+productsign --sign "$INSTALLER_IDENTITY" "$UNSIGNED_PKG" "$SIGNED_PKG"
+pkgutil --check-signature "$SIGNED_PKG"
+```
+
+Create the DMG from the signed PKG, then sign the completed disk image with the
+Application identity. A DMG is a container, not a second installer format; the
+user opens it and runs the signed PKG inside.
+
+```sh
+DMG_STAGE=$(mktemp -d /tmp/arrow-odbc-signed-dmg.XXXXXX)
+trap 'rm -rf "$DMG_STAGE"' EXIT
+cp "$SIGNED_PKG" "$DMG_STAGE/"
+hdiutil create \
+  -volname "Arrow Flight SQL ODBC 25.0.1 arm64" \
+  -srcfolder "$DMG_STAGE" \
+  -format UDZO \
+  -ov \
+  "$DMG"
+codesign --force --timestamp \
+  --identifier org.apache.arrow.flight-sql-odbc.dmg \
+  --sign "$APP_IDENTITY" "$DMG"
+codesign --verify --strict --verbose=4 "$DMG"
+```
+
+For the Intel artifact, use the x86_64 build directory, `arch -x86_64` for all
+build and signing tools where required, and an x86_64-specific DMG name. The
+validated x86_64 diagnostic artifact dynamically references Intel Homebrew
+OpenSSL 3 at `/usr/local/opt/openssl@3`; do not distribute it to machines that
+do not provide that dependency. Rebuild OpenSSL statically or bundle and sign
+the required libraries with `@rpath` before signing the Intel driver.
+
+For direct distribution, store notarization credentials in the keychain rather
+than in a script or environment log, then notarize the outermost artifact:
+
+```sh
+xcrun notarytool store-credentials arrow-notary \
+  --apple-id 'your-apple-id@example.com' \
+  --team-id 'TEAMID' \
+  --password 'app-specific-password'
+xcrun notarytool submit "$DMG" --keychain-profile arrow-notary --wait
+xcrun stapler staple "$DMG"
+xcrun stapler validate "$DMG"
+spctl -a -t open --context context:primary-signature -v "$DMG"
+```
+
+Only the outermost container needs notarization when the signed PKG is shipped
+inside the DMG. If the PKG is also distributed as a standalone download, submit
+and staple that signed PKG separately. Recreate and re-sign the DMG whenever
+its contents change. Apple requires Developer ID signatures and a secure
+timestamp for notarized distribution; production PKGs and DMGs should also be
+tested on a clean Mac with Gatekeeper enabled.
 
 ## Install and verify registration
 
