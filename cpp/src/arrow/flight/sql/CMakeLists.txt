@@ -62,6 +62,7 @@ set(ARROW_FLIGHT_SQL_SRCS
     sql_info_internal.cc
     column_metadata.cc
     client.cc
+    poll_info_internal.cc
     protocol_internal.cc
     server_session_middleware.cc)
 

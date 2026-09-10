@@ -44,7 +44,12 @@ namespace {
 void ClosePreparedStatementIfAny(std::shared_ptr<PreparedStatement>& prepared_statement,
                                  const FlightCallOptions& options) {
   if (prepared_statement != nullptr) {
-    ThrowIfNotOK(prepared_statement->Close(options));
+    // Closing the prepared handle is cleanup for the completed operation.  Reusing a
+    // statement cancellation token here would turn successful prompt cancellation into
+    // a second, uncaught cancellation from FlightSqlStatement's destructor.
+    FlightCallOptions close_options = options;
+    close_options.stop_token = StopToken::Unstoppable();
+    ThrowIfNotOK(prepared_statement->Close(close_options));
     prepared_statement.reset();
   }
 }
@@ -125,13 +130,14 @@ bool FlightSqlStatement::ExecutePrepared() {
   // GH-47990 TODO: use DCHECK instead of assert
   assert(prepared_statement_.get() != nullptr);
 
+  BeginExecution();
   Result<std::shared_ptr<FlightInfo>> result =
       prepared_statement_->Execute(call_options_);
   ThrowIfNotOK(result.status());
 
-  current_result_set_ = std::make_shared<FlightSqlResultSet>(
+  SetCurrentResultSet(std::make_shared<FlightSqlResultSet>(
       sql_client_, client_options_, call_options_, result.ValueOrDie(), nullptr,
-      diagnostics_, metadata_settings_);
+      diagnostics_, metadata_settings_));
 
   return true;
 }
@@ -139,17 +145,19 @@ bool FlightSqlStatement::ExecutePrepared() {
 bool FlightSqlStatement::Execute(const std::string& query) {
   ClosePreparedStatementIfAny(prepared_statement_, call_options_);
 
+  BeginExecution();
   Result<std::shared_ptr<FlightInfo>> result = sql_client_.Execute(call_options_, query);
   ThrowIfNotOK(result.status());
 
-  current_result_set_ = std::make_shared<FlightSqlResultSet>(
+  SetCurrentResultSet(std::make_shared<FlightSqlResultSet>(
       sql_client_, client_options_, call_options_, result.ValueOrDie(), nullptr,
-      diagnostics_, metadata_settings_);
+      diagnostics_, metadata_settings_));
 
   return true;
 }
 
 std::shared_ptr<ResultSet> FlightSqlStatement::GetResultSet() {
+  std::lock_guard<std::mutex> lock(execution_state_mutex_);
   return current_result_set_;
 }
 
@@ -160,24 +168,26 @@ std::shared_ptr<ResultSet> FlightSqlStatement::GetTables(
     const std::string* table_name, const std::string* table_type,
     const ColumnNames& column_names) {
   ClosePreparedStatementIfAny(prepared_statement_, call_options_);
+  BeginExecution();
 
   std::vector<std::string> table_types;
+  std::shared_ptr<ResultSet> result_set;
 
   if ((catalog_name && *catalog_name == "%") && (schema_name && schema_name->empty()) &&
       (table_name && table_name->empty())) {
-    current_result_set_ =
+    result_set =
         GetTablesForSQLAllCatalogs(column_names, client_options_, call_options_,
                                    sql_client_, diagnostics_, metadata_settings_);
   } else if ((catalog_name && catalog_name->empty()) &&
              (schema_name && *schema_name == "%") &&
              (table_name && table_name->empty())) {
-    current_result_set_ = GetTablesForSQLAllDbSchemas(
+    result_set = GetTablesForSQLAllDbSchemas(
         column_names, client_options_, call_options_, sql_client_, schema_name,
         diagnostics_, metadata_settings_);
   } else if ((catalog_name && catalog_name->empty()) &&
              (schema_name && schema_name->empty()) &&
              (table_name && table_name->empty()) && (table_type && *table_type == "%")) {
-    current_result_set_ =
+    result_set =
         GetTablesForSQLAllTableTypes(column_names, client_options_, call_options_,
                                      sql_client_, diagnostics_, metadata_settings_);
   } else {
@@ -185,12 +195,13 @@ std::shared_ptr<ResultSet> FlightSqlStatement::GetTables(
       ParseTableTypes(*table_type, table_types);
     }
 
-    current_result_set_ = GetTablesForGenericUse(
+    result_set = GetTablesForGenericUse(
         column_names, client_options_, call_options_, sql_client_, catalog_name,
         schema_name, table_name, table_types, diagnostics_, metadata_settings_);
   }
 
-  return current_result_set_;
+  SetCurrentResultSet(result_set);
+  return result_set;
 }
 
 std::shared_ptr<ResultSet> FlightSqlStatement::GetTables_V2(
@@ -215,6 +226,7 @@ std::shared_ptr<ResultSet> FlightSqlStatement::GetColumns_V2(
     const std::string* catalog_name, const std::string* schema_name,
     const std::string* table_name, const std::string* column_name) {
   ClosePreparedStatementIfAny(prepared_statement_, call_options_);
+  BeginExecution();
 
   Result<std::shared_ptr<FlightInfo>> result = sql_client_.GetTables(
       call_options_, catalog_name, schema_name, table_name, true, nullptr);
@@ -225,17 +237,18 @@ std::shared_ptr<ResultSet> FlightSqlStatement::GetColumns_V2(
   auto transformer = std::make_shared<GetColumns_Transformer>(
       metadata_settings_, OdbcVersion::V_2, column_name);
 
-  current_result_set_ = std::make_shared<FlightSqlResultSet>(
+  auto result_set = std::make_shared<FlightSqlResultSet>(
       sql_client_, client_options_, call_options_, flight_info, transformer, diagnostics_,
       metadata_settings_);
-
-  return current_result_set_;
+  SetCurrentResultSet(result_set);
+  return result_set;
 }
 
 std::shared_ptr<ResultSet> FlightSqlStatement::GetColumns_V3(
     const std::string* catalog_name, const std::string* schema_name,
     const std::string* table_name, const std::string* column_name) {
   ClosePreparedStatementIfAny(prepared_statement_, call_options_);
+  BeginExecution();
 
   Result<std::shared_ptr<FlightInfo>> result = sql_client_.GetTables(
       call_options_, catalog_name, schema_name, table_name, true, nullptr);
@@ -246,15 +259,16 @@ std::shared_ptr<ResultSet> FlightSqlStatement::GetColumns_V3(
   auto transformer = std::make_shared<GetColumns_Transformer>(
       metadata_settings_, OdbcVersion::V_3, column_name);
 
-  current_result_set_ = std::make_shared<FlightSqlResultSet>(
+  auto result_set = std::make_shared<FlightSqlResultSet>(
       sql_client_, client_options_, call_options_, flight_info, transformer, diagnostics_,
       metadata_settings_);
-
-  return current_result_set_;
+  SetCurrentResultSet(result_set);
+  return result_set;
 }
 
 std::shared_ptr<ResultSet> FlightSqlStatement::GetTypeInfo_V2(int16_t data_type) {
   ClosePreparedStatementIfAny(prepared_statement_, call_options_);
+  BeginExecution();
 
   Result<std::shared_ptr<FlightInfo>> result = sql_client_.GetXdbcTypeInfo(call_options_);
   ThrowIfNotOK(result.status());
@@ -264,15 +278,16 @@ std::shared_ptr<ResultSet> FlightSqlStatement::GetTypeInfo_V2(int16_t data_type)
   auto transformer = std::make_shared<GetTypeInfoTransformer>(
       metadata_settings_, OdbcVersion::V_2, data_type);
 
-  current_result_set_ = std::make_shared<FlightSqlResultSet>(
+  auto result_set = std::make_shared<FlightSqlResultSet>(
       sql_client_, client_options_, call_options_, flight_info, transformer, diagnostics_,
       metadata_settings_);
-
-  return current_result_set_;
+  SetCurrentResultSet(result_set);
+  return result_set;
 }
 
 std::shared_ptr<ResultSet> FlightSqlStatement::GetTypeInfo_V3(int16_t data_type) {
   ClosePreparedStatementIfAny(prepared_statement_, call_options_);
+  BeginExecution();
 
   Result<std::shared_ptr<FlightInfo>> result = sql_client_.GetXdbcTypeInfo(call_options_);
   ThrowIfNotOK(result.status());
@@ -282,18 +297,37 @@ std::shared_ptr<ResultSet> FlightSqlStatement::GetTypeInfo_V3(int16_t data_type)
   auto transformer = std::make_shared<GetTypeInfoTransformer>(
       metadata_settings_, OdbcVersion::V_3, data_type);
 
-  current_result_set_ = std::make_shared<FlightSqlResultSet>(
+  auto result_set = std::make_shared<FlightSqlResultSet>(
       sql_client_, client_options_, call_options_, flight_info, transformer, diagnostics_,
       metadata_settings_);
-
-  return current_result_set_;
+  SetCurrentResultSet(result_set);
+  return result_set;
 }
 
 Diagnostics& FlightSqlStatement::GetDiagnostics() { return diagnostics_; }
 
+void FlightSqlStatement::BeginExecution() {
+  std::lock_guard<std::mutex> lock(execution_state_mutex_);
+  execution_stop_source_.Reset();
+  call_options_.stop_token = execution_stop_source_.token();
+  current_result_set_.reset();
+}
+
+void FlightSqlStatement::SetCurrentResultSet(std::shared_ptr<ResultSet> result_set) {
+  std::lock_guard<std::mutex> lock(execution_state_mutex_);
+  current_result_set_ = std::move(result_set);
+}
+
 void FlightSqlStatement::Cancel() {
-  if (!current_result_set_) return;
-  current_result_set_->Cancel();
+  std::shared_ptr<ResultSet> result_set;
+  {
+    std::lock_guard<std::mutex> lock(execution_state_mutex_);
+    execution_stop_source_.RequestStop(Status::Cancelled("ODBC statement cancelled"));
+    result_set = current_result_set_;
+  }
+  if (result_set) {
+    result_set->Cancel();
+  }
 }
 
 }  // namespace arrow::flight::sql::odbc

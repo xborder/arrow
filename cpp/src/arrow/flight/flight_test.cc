@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -1573,10 +1574,24 @@ class CancelTestServer : public FlightServerBase {
     return Status::OK();
   }
 
+  Status PollFlightInfo(const ServerCallContext& context, const FlightDescriptor&,
+                        std::unique_ptr<PollInfo>*) override {
+    poll_started_ = true;
+    while (!context.is_cancelled()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    poll_cancelled_ = true;
+    return Status::Cancelled("PollFlightInfo server observed client cancellation");
+  }
+
   int64_t CheckCounter() const { return counter_; }
+  bool PollStarted() const { return poll_started_; }
+  bool PollCancelled() const { return poll_cancelled_; }
 
  private:
   std::atomic<int64_t> counter_ = 0;
+  std::atomic<bool> poll_started_ = false;
+  std::atomic<bool> poll_cancelled_ = false;
 };
 
 class TestCancel : public ::testing::Test {
@@ -1643,6 +1658,31 @@ TEST_F(TestCancel, ListActions) {
   stop_source.RequestStop(Status::Cancelled("StopSource"));
   EXPECT_RAISES_WITH_MESSAGE_THAT(Cancelled, ::testing::HasSubstr("StopSource"),
                                   client_->ListActions(options));
+}
+
+TEST_F(TestCancel, PollFlightInfoWhileBlocked) {
+  StopSource stop_source;
+  FlightCallOptions options;
+  options.stop_token = stop_source.token();
+
+  auto future = std::async(std::launch::async, [&]() {
+    return client_->PollFlightInfo(options, FlightDescriptor::Command("blocked"))
+        .status();
+  });
+  for (int i = 0; i < 200 && !Server()->PollStarted(); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  ASSERT_TRUE(Server()->PollStarted());
+
+  stop_source.RequestStop(Status::Cancelled("SQLCancel test"));
+  ASSERT_EQ(std::future_status::ready,
+            future.wait_for(std::chrono::milliseconds(500)));
+  EXPECT_RAISES_WITH_MESSAGE_THAT(Cancelled, ::testing::HasSubstr("SQLCancel test"),
+                                  future.get());
+  for (int i = 0; i < 200 && !Server()->PollCancelled(); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  EXPECT_TRUE(Server()->PollCancelled());
 }
 
 TEST_F(TestCancel, DoGet) {
