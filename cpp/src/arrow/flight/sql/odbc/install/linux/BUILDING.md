@@ -27,11 +27,11 @@ unixODBC driver manager, driver, smoke-test process, and userspace were all
 x86_64. This is an x86_64 ABI validation, but it is not a bare-metal x86_64
 performance test.
 
-The standalone RPM was built and tested separately on an x86_64 Amazon Linux
-2023 VM (GCC 11.5.0, CMake 3.31.10, Ninja 1.10.2, glibc 2.34, RPM 4.16.1.3,
-and unixODBC 2.3.9). That EL-compatible build is the compatibility baseline
-for the RPM; the Ubuntu binary above must not be repackaged for older RPM
-distributions.
+The standalone RPM was built and tested separately on x86_64 Amazon Linux 2023
+VMs (GCC 11.5.0, CMake 3.31.10 in the initial run and 4.4.3 in the final
+artifact rebuild, Ninja 1.10.2, glibc 2.34, RPM 4.16.1.3, and unixODBC 2.3.9).
+That EL-compatible build is the compatibility baseline for the RPM; the Ubuntu
+binary above must not be repackaged for older RPM distributions.
 
 The 25.0.1 source commit predates the standalone RPM helper. Keep this
 packaging checkout at the branch containing `build_rpm.sh` and, when producing

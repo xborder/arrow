@@ -35,11 +35,12 @@ Source tag: `apache-arrow-25.0.1`
 - Execution host: Apple Silicon, using an aarch64 Colima VM and Rosetta to run
   the complete amd64 container userspace.
 
-The RPM build and lifecycle validation used a disposable x86_64 Amazon Linux
-2023 VM in the AWS Dremio Alliances account. It used GCC 11.5.0, CMake 3.31.10,
-Ninja 1.10.2, RPM 4.16.1.3, glibc 2.34, and unixODBC 2.3.9. The VM was
-terminated after validation; its temporary security group and EC2 key pair
-were deleted as well.
+The RPM build and lifecycle validation used disposable x86_64 Amazon Linux 2023
+VMs in the AWS Dremio Alliances account. They used GCC 11.5.0, CMake 3.31.10 in
+the initial validation and 4.4.3 for the final artifact rebuild, Ninja 1.10.2,
+RPM 4.16.1.3, glibc 2.34, and unixODBC 2.3.9. Both VMs were terminated after
+validation; their temporary security groups and EC2 key pairs were deleted as
+well.
 
 The compiler, linker, unixODBC driver manager, driver, and smoke-test process
 were x86_64. This validates the Linux x86_64 ABI and end-to-end behavior, but it
