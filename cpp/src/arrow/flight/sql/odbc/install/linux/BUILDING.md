@@ -118,6 +118,91 @@ explicit TODO messages for both formats, leaves the Linux ODBC and documentation
 install directories unset, and selects no Linux CPack generator. Therefore the
 validated deliverable is a relocatable tar archive, not a DEB or RPM.
 
+### Standalone RPM matching the Dremio package layout
+
+`build_rpm.sh` creates a standalone x86_64 RPM with the same basic layout as
+Dremio's Linux driver package: `/opt/arrow-flight-sql-odbc-driver/lib64` holds
+the versioned driver and `/opt/arrow-flight-sql-odbc-driver/conf` holds the
+driver and sample DSN configuration. RPM `%post` and `%postun` scripts register
+and unregister the driver with unixODBC. The sample DSN is registered on first
+install and can then be edited in `/etc/odbc.ini`.
+
+Build on the oldest RPM-based distribution that the package must support. The
+Ubuntu 24.04 validation binary in this directory requires newer glibc and
+libstdc++ symbols than an older RHEL/CentOS system; putting that binary in an
+RPM does not make it compatible with those systems. The following example uses
+an x86_64 AlmaLinux 9 host or VM:
+
+```bash
+sudo dnf install -y epel-release
+sudo dnf install --enablerepo=crb -y \
+  gcc gcc-c++ cmake ninja-build make git rpm-build file \
+  unixODBC unixODBC-devel curl-devel openssl-devel ca-certificates \
+  pkgconfig zlib-devel boost-devel c-ares-devel protobuf-devel \
+  protobuf-compiler grpc-devel grpc-plugins
+```
+
+Configure and build the driver from the source checkout. Keep the RPM
+installer disabled; RPM registration is supplied by the spec below:
+
+```bash
+cmake -S cpp -B cpp/build/rpm-odbc -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DARROW_BUILD_SHARED=ON \
+  -DARROW_BUILD_STATIC=ON \
+  -DARROW_BUILD_TESTS=OFF \
+  -DARROW_BUILD_EXAMPLES=OFF \
+  -DARROW_FLIGHT=ON \
+  -DARROW_FLIGHT_SQL=ON \
+  -DARROW_FLIGHT_SQL_ODBC=ON \
+  -DARROW_FLIGHT_SQL_ODBC_INSTALLER=OFF \
+  -DARROW_DEPENDENCY_SOURCE=SYSTEM \
+  -DARROW_DEPENDENCY_USE_SHARED=ON
+cmake --build cpp/build/rpm-odbc \
+  --target arrow_flight_sql_odbc_shared --parallel "$(nproc)"
+driver="$(find cpp/build/rpm-odbc -type f \
+  -name libarrow_flight_sql_odbc.so -print -quit)"
+test -n "${driver}"
+```
+
+Create the RPM and checksum. The optional third argument is the driver version;
+it defaults to `25.0.1` for the validated artifact in this directory:
+
+```bash
+rpm_dir=cpp/src/arrow/flight/sql/odbc/install/linux/artifacts/rpm
+mkdir -p "${rpm_dir}"
+cpp/src/arrow/flight/sql/odbc/install/linux/build_rpm.sh \
+  "${driver}" "${rpm_dir}" 25.0.1
+rpm_file="$(find "${rpm_dir}" -maxdepth 1 -name '*.rpm' -print -quit)"
+test -n "${rpm_file}"
+rpm -qip "${rpm_file}"
+rpm -qp --requires "${rpm_file}"
+```
+
+Install and validate the package lifecycle as root:
+
+```bash
+sudo dnf install -y "${rpm_file}"
+odbcinst -q -d -n "Apache Arrow Flight SQL ODBC Driver"
+odbcinst -q -s -n "Apache Arrow Flight SQL ODBC DSN"
+ldd /opt/arrow-flight-sql-odbc-driver/lib64/libarrow_flight_sql_odbc.so
+
+# Reinstall/upgrade: the driver registration must remain single and valid.
+sudo dnf install -y "${rpm_file}"
+test "$(odbcinst -q -d -n 'Apache Arrow Flight SQL ODBC Driver' | grep -ic '^Driver=')" -eq 1
+
+# Uninstall: package-owned driver and sample DSN registrations are removed.
+sudo dnf remove -y apache-arrow-flight-sql-odbc-driver
+! odbcinst -q -d -n "Apache Arrow Flight SQL ODBC Driver"
+```
+
+The RPM is intentionally separate from the full-Arrow RPM workflow. It does
+not bundle Arrow shared libraries or a private CA bundle; RPM's automatic ELF
+dependency discovery records the required system libraries, and the sample DSN
+uses the system trust store. Edit `/etc/odbc.ini` with the target host, port,
+and credentials before connecting. The package's driver name is prefixed with
+`Apache` so it does not silently replace a separately installed Dremio driver.
+
 ### RPM through the full Arrow release packager
 
 The repository has a separate full-Arrow RPM workflow, documented in

@@ -1,0 +1,13 @@
+[ODBC Data Sources]
+Apache Arrow Flight SQL ODBC DSN=Apache Arrow Flight SQL ODBC Driver
+
+[Apache Arrow Flight SQL ODBC DSN]
+Description=ODBC Driver DSN for Apache Arrow Flight SQL
+Driver=Apache Arrow Flight SQL ODBC Driver
+Host=[HOST]
+Port=443
+UID=[USERNAME]
+PWD=[PASSWORD]
+# For token authentication, replace PWD with: Token=[TOKEN]
+useEncryption=true
+useSystemTrustStore=true

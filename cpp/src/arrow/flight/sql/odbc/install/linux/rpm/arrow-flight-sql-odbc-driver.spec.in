@@ -1,0 +1,138 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+%global driver_root /opt/arrow-flight-sql-odbc-driver
+%global driver_file libarrow_flight_sql_odbc.so.@VERSION@
+%global driver_link libarrow_flight_sql_odbc.so
+%global driver_name Apache Arrow Flight SQL ODBC Driver
+%global dsn_name Apache Arrow Flight SQL ODBC DSN
+%global state_dir /var/lib/apache-arrow-flight-sql-odbc-driver
+
+Name:           apache-arrow-flight-sql-odbc-driver
+Version:        @VERSION@
+Release:        @RELEASE@%{?dist}
+Summary:        Apache Arrow Flight SQL ODBC driver
+License:        Apache-2.0
+URL:            https://arrow.apache.org/
+ExclusiveArch:  x86_64
+
+Requires:       unixODBC
+Requires:       ca-certificates
+Requires(post): unixODBC
+Requires(postun): unixODBC
+
+Source0:        driver.so
+Source1:        odbcinst.ini
+Source2:        odbc.ini
+Source3:        LICENSE.txt
+Source4:        NOTICE.txt
+Source5:        README.md
+Source6:        connection-options.md
+Source7:        BUILDING.md
+Source8:        VALIDATION.md
+
+%description
+Standalone Apache Arrow Flight SQL ODBC driver packaged for RPM-based Linux
+systems. The package uses the Dremio-compatible /opt layout and registers the
+driver and a sample system DSN with unixODBC during installation.
+
+%prep
+
+%build
+
+%install
+rm -rf %{buildroot}
+install -d %{buildroot}%{driver_root}/lib64
+install -d %{buildroot}%{driver_root}/conf
+install -d %{buildroot}%{_docdir}/%{name}
+install -d %{buildroot}%{state_dir}
+
+install -m 0755 %{SOURCE0} %{buildroot}%{driver_root}/lib64/%{driver_file}
+ln -s %{driver_file} %{buildroot}%{driver_root}/lib64/%{driver_link}
+install -m 0644 %{SOURCE1} %{buildroot}%{driver_root}/conf/odbcinst.ini
+install -m 0644 %{SOURCE2} %{buildroot}%{driver_root}/conf/odbc.ini
+install -m 0644 %{SOURCE3} %{buildroot}%{_docdir}/%{name}/LICENSE.txt
+install -m 0644 %{SOURCE4} %{buildroot}%{_docdir}/%{name}/NOTICE.txt
+install -m 0644 %{SOURCE5} %{buildroot}%{_docdir}/%{name}/README.md
+install -m 0644 %{SOURCE6} %{buildroot}%{_docdir}/%{name}/connection-options.md
+install -m 0644 %{SOURCE7} %{buildroot}%{_docdir}/%{name}/BUILDING.md
+install -m 0644 %{SOURCE8} %{buildroot}%{_docdir}/%{name}/VALIDATION.md
+
+%post
+driver_name='%{driver_name}'
+driver_path='%{driver_root}/lib64/%{driver_link}'
+driver_conf='%{driver_root}/conf/odbcinst.ini'
+dsn_name='%{dsn_name}'
+dsn_conf='%{driver_root}/conf/odbc.ini'
+
+if ! test -x /usr/bin/odbcinst; then
+  echo "odbcinst is required to register %{name}" >&2
+  exit 1
+fi
+
+if registration=$(/usr/bin/odbcinst -q -d -n "${driver_name}" 2>/dev/null); then
+  registered_driver=$(printf '%s\n' "${registration}" |
+    awk -F= 'tolower($1) == "driver" {sub(/^[^=]*=/, ""); print; exit}')
+  if test "${registered_driver}" != "${driver_path}"; then
+    echo "${driver_name} is already registered at ${registered_driver}" >&2
+    exit 1
+  fi
+else
+  /usr/bin/odbcinst -i -d -f "${driver_conf}"
+fi
+
+if ! /usr/bin/odbcinst -q -s -n "${dsn_name}" >/dev/null 2>&1; then
+  /usr/bin/odbcinst -i -s -l -f "${dsn_conf}"
+  touch '%{state_dir}/dsn-owned'
+fi
+
+%postun
+if test "$1" -eq 0 && test -x /usr/bin/odbcinst; then
+  driver_name='%{driver_name}'
+  driver_path='%{driver_root}/lib64/%{driver_link}'
+  if registration=$(/usr/bin/odbcinst -q -d -n "${driver_name}" 2>/dev/null); then
+    registered_driver=$(printf '%s\n' "${registration}" |
+      awk -F= 'tolower($1) == "driver" {sub(/^[^=]*=/, ""); print; exit}')
+    if test "${registered_driver}" = "${driver_path}"; then
+      /usr/bin/odbcinst -u -d -n "${driver_name}" || :
+    fi
+  fi
+  if test -f '%{state_dir}/dsn-owned'; then
+    /usr/bin/odbcinst -u -s -n '%{dsn_name}' || :
+    rm -f '%{state_dir}/dsn-owned'
+  fi
+fi
+
+%files
+%dir %{driver_root}
+%dir %{driver_root}/lib64
+%dir %{driver_root}/conf
+%{driver_root}/lib64/%{driver_file}
+%{driver_root}/lib64/%{driver_link}
+%config(noreplace) %{driver_root}/conf/odbcinst.ini
+%config(noreplace) %{driver_root}/conf/odbc.ini
+%dir %{state_dir}
+%license %{_docdir}/%{name}/LICENSE.txt
+%license %{_docdir}/%{name}/NOTICE.txt
+%doc %{_docdir}/%{name}/README.md
+%doc %{_docdir}/%{name}/connection-options.md
+%doc %{_docdir}/%{name}/BUILDING.md
+%doc %{_docdir}/%{name}/VALIDATION.md
+
+%changelog
+* Thu Sep 10 2026 Apache Arrow developers <dev@arrow.apache.org> - @VERSION@-@RELEASE@
+- Add standalone Apache Arrow Flight SQL ODBC RPM package.
