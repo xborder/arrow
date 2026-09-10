@@ -125,8 +125,15 @@ runtime and development packages removed the registration and all package-owned
 ODBC files through `%postun`.
 
 The checked-in RPM artifact and `RPM-SHA256SUMS` correspond to this native
-packager output. The tar checksum file remains independent and covers the
-Ubuntu/glibc relocatable artifact.
+packager output:
+
+```text
+arrow2500-flight-sql-odbc-libs-25.0.1-1.amzn2023.x86_64.rpm
+SHA-256: 89ddb4d0d267cd332e0f545585bbf5798320caea452384214e933badc9dc425e
+```
+
+The tar checksum file remains independent and covers the Ubuntu/glibc
+relocatable artifact.
 
 ## Installer and credential safety
 

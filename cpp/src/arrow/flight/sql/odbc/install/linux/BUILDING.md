@@ -79,7 +79,7 @@ reproducible:
 ```bash
 cd "$packaging_root/dev/tasks/linux-packages/apache-arrow"
 rake yum:build YUM_TARGETS=amazon-linux-2023
-rpm_dir="$PWD/yum/repositories/amazon/2023/x86_64/Packages"
+rpm_dir="$PWD/yum/repositories/amazon-linux/2023/x86_64/Packages"
 find "$rpm_dir" -maxdepth 1 -type f -name '*flight-sql-odbc*.rpm' -print
 ```
 
@@ -93,7 +93,7 @@ Inspect the package before installation:
 
 ```bash
 odbc_rpm="$(find "$rpm_dir" -maxdepth 1 \
-  -name 'arrow2500-flight-sql-odbc-libs-*.rpm' -print -quit)"
+  -name 'arrow2500-flight-sql-odbc-libs-25.0.1-*.rpm' -print -quit)"
 test -n "$odbc_rpm"
 rpm -qip "$odbc_rpm"
 rpm -qpl "$odbc_rpm"
@@ -119,7 +119,7 @@ The RPM `%post` script registers the driver through the generated template.
 Reinstalling must preserve exactly one registration:
 
 ```bash
-sudo dnf reinstall -y arrow2500-flight-sql-odbc-libs
+sudo dnf reinstall -y "$odbc_rpm"
 test "$(odbcinst -q -d -n 'Apache Arrow Flight SQL ODBC Driver' \
   | grep -ic '^Driver=')" -eq 1
 ```
@@ -129,7 +129,8 @@ registration and package-owned files:
 
 ```bash
 sudo dnf remove -y arrow2500-flight-sql-odbc-libs arrow-flight-sql-odbc-devel
-! odbcinst -q -d -n 'Apache Arrow Flight SQL ODBC Driver'
+! grep -q 'Apache Arrow Flight SQL ODBC Driver' /etc/odbcinst.ini \
+  /etc/odbcinst.ini.rpmsave 2>/dev/null
 ! test -e "$driver"
 ```
 
