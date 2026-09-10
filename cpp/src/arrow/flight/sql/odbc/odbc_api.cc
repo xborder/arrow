@@ -1083,6 +1083,20 @@ SQLRETURN SQLExecute(SQLHSTMT stmt) {
   });
 }
 
+SQLRETURN SQLCancel(SQLHSTMT stmt) {
+  ARROW_LOG(DEBUG) << "SQLCancel called with stmt: " << stmt;
+  if (!stmt) {
+    return SQL_INVALID_HANDLE;
+  }
+
+  // Do not acquire ODBCHandle::mtx_: the executing thread holds it while blocked in
+  // PollFlightInfo, so taking it here would make cancellation deadlock behind the call
+  // it is meant to interrupt.  Cancel itself is non-throwing and synchronizes the SPI
+  // statement's active operation state.
+  reinterpret_cast<ODBC::ODBCStatement*>(stmt)->Cancel();
+  return SQL_SUCCESS;
+}
+
 SQLRETURN SQLFetch(SQLHSTMT stmt) {
   ARROW_LOG(DEBUG) << "SQLFetch called with stmt: " << stmt;
 

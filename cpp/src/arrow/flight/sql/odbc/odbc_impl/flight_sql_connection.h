@@ -71,6 +71,7 @@ class FlightSqlConnection : public Connection {
   static constexpr std::string_view STRING_COLUMN_LENGTH = "StringColumnLength";
   static constexpr std::string_view USE_WIDE_CHAR = "UseWideChar";
   static constexpr std::string_view CHUNK_BUFFER_CAPACITY = "ChunkBufferCapacity";
+  static constexpr std::string_view USE_POLL_INFO = "UsePollInfo";
 
   explicit FlightSqlConnection(OdbcVersion odbc_version,
                                const std::string& driver_version = "0.9.0.0");
@@ -116,5 +117,7 @@ class FlightSqlConnection : public Connection {
   bool GetUseWideChar(const ConnPropertyMap& conn_property_map);
 
   size_t GetChunkBufferCapacity(const ConnPropertyMap& conn_property_map);
+
+  bool GetUsePollInfo(const ConnPropertyMap& conn_property_map);
 };
 }  // namespace arrow::flight::sql::odbc
