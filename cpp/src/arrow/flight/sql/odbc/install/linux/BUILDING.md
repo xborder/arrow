@@ -1,9 +1,10 @@
-# Apache Arrow Flight SQL ODBC 25.0.1: Linux build and install
+# Apache Arrow Flight SQL ODBC 25.0.1: Linux build, package, and install
 
 This runbook builds the Apache Arrow Flight SQL ODBC driver from Arrow commit
-`beccec0d0c451b7aa3e4530416ac431b3c035c69` and produces an x86_64 Linux shared
-library plus a relocatable tar archive. It never puts a Dremio credential in a
-source file, command-line argument, shell history, log, or artifact.
+`beccec0d0c451b7aa3e4530416ac431b3c035c69` and produces x86_64 Linux shared
+library, relocatable tar, and standalone RPM deliverables. It never puts a
+Dremio credential in a source file, command-line argument, shell history, log,
+or artifact.
 
 ## Tested target
 
@@ -25,6 +26,19 @@ inside an aarch64 Colima Linux VM on Apple Silicon. The compiler, linker,
 unixODBC driver manager, driver, smoke-test process, and userspace were all
 x86_64. This is an x86_64 ABI validation, but it is not a bare-metal x86_64
 performance test.
+
+The standalone RPM was built and tested separately on an x86_64 Amazon Linux
+2023 VM (GCC 11.5.0, CMake 3.31.10, Ninja 1.10.2, glibc 2.34, RPM 4.16.1.3,
+and unixODBC 2.3.9). That EL-compatible build is the compatibility baseline
+for the RPM; the Ubuntu binary above must not be repackaged for older RPM
+distributions.
+
+The 25.0.1 source commit predates the standalone RPM helper. Keep this
+packaging checkout at the branch containing `build_rpm.sh` and, when producing
+the 25.0.1 RPM, use a second clean checkout of the upstream 25.0.1 source for
+the CMake build. The helper copies its spec and documentation from the
+packaging checkout. A single current-`main` checkout is also supported; use
+its reported version when invoking `build_rpm.sh`.
 
 ## Prerequisites
 
@@ -112,11 +126,10 @@ cpp/build/linux-odbc-validation/cpp/release/libarrow_flight_sql_odbc.so
 
 ## Package and checksum
 
-The pinned source does not implement a Linux DEB or RPM. In
-`cpp/src/arrow/flight/sql/odbc/CMakeLists.txt`, the Linux installer branch emits
-explicit TODO messages for both formats, leaves the Linux ODBC and documentation
-install directories unset, and selects no Linux CPack generator. Therefore the
-validated deliverable is a relocatable tar archive, not a DEB or RPM.
+The upstream CPack Linux installer branch still emits TODO messages for DEB and
+RPM and selects no Linux CPack generator. The relocatable tar is produced by
+`package.sh`; this branch additionally provides `build_rpm.sh` and an RPM spec
+for a complete standalone RPM installation.
 
 ### Standalone RPM matching the Dremio package layout
 
@@ -131,14 +144,15 @@ Build on the oldest RPM-based distribution that the package must support. The
 Ubuntu 24.04 validation binary in this directory requires newer glibc and
 libstdc++ symbols than an older RHEL/CentOS system; putting that binary in an
 RPM does not make it compatible with those systems. The following example uses
-an x86_64 AlmaLinux 9 host or VM:
+an x86_64 EL-compatible host or VM (the commands below were validated on
+Amazon Linux 2023):
 
 ```bash
 sudo dnf install -y epel-release
 sudo dnf install --enablerepo=crb -y \
   gcc gcc-c++ cmake ninja-build make git rpm-build file \
-  unixODBC unixODBC-devel curl-devel openssl-devel ca-certificates \
-  pkgconfig zlib-devel boost-devel libicu-devel
+  unixODBC unixODBC-devel libcurl-devel openssl-devel ca-certificates \
+  pkgconf-pkg-config zlib-devel boost-devel libicu-devel
 ```
 
 Arrow requires CMake 3.25 or newer. If the distribution's CMake is older
@@ -153,10 +167,21 @@ cmake --version
 ```
 
 Configure and build the driver from the source checkout. Keep the RPM
-installer disabled; RPM registration is supplied by the spec below:
+installer disabled; RPM registration is supplied by the spec below. On Amazon
+Linux 2023, pass the system OpenSSL paths explicitly so CMake 3.31 does not
+select an incomplete alternative installation:
 
 ```bash
-cmake -S cpp -B cpp/build/rpm-odbc -G Ninja \
+# Run these from the packaging checkout. For the exact 25.0.1 build, set
+# source_root to a separate upstream 25.0.1 checkout. For current main, use
+# source_root="$PWD" and pass its version to build_rpm.sh below.
+packaging_root="$PWD"
+source_root="/path/to/apache-arrow-25.0.1"
+cd "${source_root}"
+```
+
+```bash
+cmake -S "${source_root}/cpp" -B "${source_root}/cpp/build/rpm-odbc" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DARROW_BUILD_SHARED=ON \
   -DARROW_BUILD_STATIC=ON \
@@ -177,27 +202,45 @@ cmake -S cpp -B cpp/build/rpm-odbc -G Ninja \
   -DARROW_WITH_BZ2=OFF \
   -DARROW_WITH_LZ4=OFF \
   -DARROW_WITH_SNAPPY=OFF \
-  -DARROW_WITH_ZSTD=OFF
-cmake --build cpp/build/rpm-odbc \
+  -DARROW_WITH_ZSTD=OFF \
+  -DOPENSSL_ROOT_DIR=/usr \
+  -DOPENSSL_INCLUDE_DIR=/usr/include \
+  -DOPENSSL_SSL_LIBRARY=/usr/lib64/libssl.so \
+  -DOPENSSL_CRYPTO_LIBRARY=/usr/lib64/libcrypto.so
+cmake --build "${source_root}/cpp/build/rpm-odbc" \
   --target arrow_flight_sql_odbc_shared --parallel "$(nproc)"
-driver="$(find cpp/build/rpm-odbc -type f \
+driver="$(find "${source_root}/cpp/build/rpm-odbc" -type f \
   -name 'libarrow_flight_sql_odbc.so.*' -print -quit)"
 test -n "${driver}"
 ```
+
+The helper and RPM templates are additions on this branch, while the
+reproducible 25.0.1 driver source is the upstream commit shown at the top of
+this file. If you build a different checkout, pass the matching semantic
+version (for example `26.0.0` for a `26.0.0-SNAPSHOT` checkout) as the third
+argument; never label a binary with a version different from the source it was
+built from.
 
 Create the RPM and checksum. The optional third argument is the driver version;
 it defaults to `25.0.1` for the validated artifact in this directory:
 
 ```bash
-rpm_dir=cpp/src/arrow/flight/sql/odbc/install/linux/artifacts/rpm
+rpm_dir="${packaging_root}/cpp/src/arrow/flight/sql/odbc/install/linux/artifacts/rpm"
 mkdir -p "${rpm_dir}"
-cpp/src/arrow/flight/sql/odbc/install/linux/build_rpm.sh \
+"${packaging_root}/cpp/src/arrow/flight/sql/odbc/install/linux/build_rpm.sh" \
   "${driver}" "${rpm_dir}" 25.0.1
-rpm_file="$(find "${rpm_dir}" -maxdepth 1 -name '*.rpm' -print -quit)"
+rpm_file="$(find "${rpm_dir}" -maxdepth 1 \
+  -name 'apache-arrow-flight-sql-odbc-driver-25.0.1-*.rpm' -print -quit)"
 test -n "${rpm_file}"
 rpm -qip "${rpm_file}"
 rpm -qp --requires "${rpm_file}"
+(cd "${rpm_dir}" && sha256sum --check RPM-SHA256SUMS)
 ```
+
+The validated 25.0.1 package is checked in under
+`artifacts/rpm/`; verify it before distribution with the same checksum command.
+The RPM filename includes the build host's distribution release (the validated
+Amazon Linux 2023 build ends in `1.amzn2023.x86_64.rpm`).
 
 Install and validate the package lifecycle as root:
 
@@ -214,6 +257,7 @@ test "$(odbcinst -q -d -n 'Apache Arrow Flight SQL ODBC Driver' | grep -ic '^Dri
 # Uninstall: package-owned driver and sample DSN registrations are removed.
 sudo dnf remove -y apache-arrow-flight-sql-odbc-driver
 ! odbcinst -q -d -n "Apache Arrow Flight SQL ODBC Driver"
+! odbcinst -q -s -n "Apache Arrow Flight SQL ODBC DSN"
 ```
 
 The RPM is intentionally separate from the full-Arrow RPM workflow. It does
