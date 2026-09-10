@@ -6,6 +6,8 @@ packager. The result is the normal split Arrow RPM set, including the ODBC
 runtime and development packages. No credential is written to source,
 configuration, shell history, logs, or artifacts.
 
+Run the commands below from the root of a fresh Arrow checkout.
+
 ## Upstream RPM support
 
 The generic RPM packager is documented in
