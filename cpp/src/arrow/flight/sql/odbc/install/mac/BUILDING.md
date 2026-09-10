@@ -143,6 +143,10 @@ The validation branch stores separate artifacts at the repository root:
 | ARM64 | `Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-arm64.pkg` | `libarrow_flight_sql_odbc.2500.1.0-macos-arm64.dylib` |
 | x86_64 | `Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-x86_64.pkg` | `libarrow_flight_sql_odbc.2500.1.0-macos-x86_64.dylib` |
 
+The ARM64 artifact carries OpenSSL statically. The validated x86_64 diagnostic
+artifact dynamically references Intel Homebrew OpenSSL 3 at
+`/usr/local/opt/openssl@3`; install that runtime before loading it.
+
 Verify all four files from the repository root with:
 
 ```sh
@@ -211,10 +215,9 @@ history:
 )
 ```
 
-Do not set `disableCertificateVerification=true` when using a real PAT. The
-validation host reached the service only with that diagnostic bypass and a
-literal invalid test value; the secure attempt failed hostname verification.
-That blocker must be resolved before claiming an authenticated query pass.
+Do not set `disableCertificateVerification=true` when using a real PAT. Both
+validated architectures completed the authenticated query with certificate
+verification enabled.
 
 ## Cleanup
 
