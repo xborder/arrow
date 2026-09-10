@@ -138,8 +138,18 @@ sudo dnf install -y epel-release
 sudo dnf install --enablerepo=crb -y \
   gcc gcc-c++ cmake ninja-build make git rpm-build file \
   unixODBC unixODBC-devel curl-devel openssl-devel ca-certificates \
-  pkgconfig zlib-devel boost-devel c-ares-devel protobuf-devel \
-  protobuf-compiler grpc-devel grpc-plugins
+  pkgconfig zlib-devel boost-devel libicu-devel
+```
+
+Arrow requires CMake 3.25 or newer. If the distribution's CMake is older
+(Amazon Linux 2023 currently ships 3.22), install a newer CMake before running
+the build, for example:
+
+```bash
+sudo dnf install -y python3-pip
+python3 -m pip install --user cmake
+export PATH="$HOME/.local/bin:${PATH}"
+cmake --version
 ```
 
 Configure and build the driver from the source checkout. Keep the RPM
@@ -156,12 +166,22 @@ cmake -S cpp -B cpp/build/rpm-odbc -G Ninja \
   -DARROW_FLIGHT_SQL=ON \
   -DARROW_FLIGHT_SQL_ODBC=ON \
   -DARROW_FLIGHT_SQL_ODBC_INSTALLER=OFF \
-  -DARROW_DEPENDENCY_SOURCE=SYSTEM \
-  -DARROW_DEPENDENCY_USE_SHARED=ON
+  -DARROW_DEPENDENCY_SOURCE=BUNDLED \
+  -DARROW_DEPENDENCY_USE_SHARED=OFF \
+  -DBoost_SOURCE=BUNDLED \
+  -DARROW_MIMALLOC=OFF \
+  -DARROW_JEMALLOC=OFF \
+  -DARROW_WITH_OPENTELEMETRY=OFF \
+  -DARROW_WITH_THRIFT=OFF \
+  -DARROW_WITH_BROTLI=OFF \
+  -DARROW_WITH_BZ2=OFF \
+  -DARROW_WITH_LZ4=OFF \
+  -DARROW_WITH_SNAPPY=OFF \
+  -DARROW_WITH_ZSTD=OFF
 cmake --build cpp/build/rpm-odbc \
   --target arrow_flight_sql_odbc_shared --parallel "$(nproc)"
 driver="$(find cpp/build/rpm-odbc -type f \
-  -name libarrow_flight_sql_odbc.so -print -quit)"
+  -name 'libarrow_flight_sql_odbc.so.*' -print -quit)"
 test -n "${driver}"
 ```
 
