@@ -14,9 +14,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-39d337d09e543ad27bed095ec76082bd16a09a4f7915a3fca90420578064b334  Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-arm64.pkg
+c2a10f064330015721684f3baa4d55007024c9e7e52923d2600c0b99c368b007  Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-arm64.pkg
 21cead00709881e8f95cdf71a839756d98eab4cd7882f5f7ea74c47fe118aca5  Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-x86_64.pkg
-7be30f8f160200a1adc2f6de1ba857ee591435ef2b4883e99af4581fa36e4c8e  libarrow_flight_sql_odbc.2500.1.0-macos-arm64.dylib
+751cf1aa1a8c158a473e9ed08c8b03f12e9ecb7e46d31ca0d17efbddeaa3fc93  libarrow_flight_sql_odbc.2500.1.0-macos-arm64.dylib
 40aa64e900a4ab4043e49041e030691de4a03f1fdddb478cdeb97d0a32c62743  libarrow_flight_sql_odbc.2500.1.0-macos-x86_64.dylib
-91249ae40d99e9a391bf024f4a5037efe4c0faa39d6d24c07371afd76309921c  Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-arm64.dmg
+c88f4428182c0766ec29641df393be4b4018488272760e53c57616c166bd13a8  Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-arm64.dmg
 e8e3f0a3007609bc6ac67f0734903608df79b8f0ac37215183044e69a13ae7e9  Apache-Arrow-Flight-SQL-ODBC-25.0.1-macos-x86_64.dmg

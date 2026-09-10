@@ -118,6 +118,23 @@ Results:
   `SQLExecDirectW`, `SQLFetch`, and `SQLFreeHandle`
 - no non-system dynamic Arrow/gRPC/OpenSSL dependencies appeared in `otool -L`
 
+## Native ARM64 EC2 rerun
+
+The ARM64 build was repeated on a dedicated `mac2-m2pro.metal` host in
+`us-east-1c` using the Amazon macOS Tahoe 26.6.2 ARM64 AMI. The guest reported
+`arm64`, and the source commit was `fb1250c3d3207a77e5f211aa2596ca7c3d4f21bd`.
+The build target, `cpack`, and `hdiutil create` all completed successfully.
+
+The generated DMG mounted read-only and contained the expected
+`ArrowFlightSQLODBC-25.0.1.pkg`; `hdiutil verify` reported a valid checksum.
+The embedded and installed drivers reported `arm64`. On this Tahoe AMI,
+`installer` initially reported that the unsigned PKG required Rosetta 2 even
+though its payload was ARM64. After installing Rosetta 2, the PKG installed
+successfully, registered both iODBC configuration files, and the native ARM64
+smoke executable connected with TLS, ran `SELECT 1 AS odbc_smoke_test`,
+returned `1`, and released all ODBC resources. This prerequisite is documented
+in `BUILDING.md`.
+
 ## x86_64 artifact checks
 
 The Intel build completed under Rosetta and produced a 44.4 MiB x86_64 Mach-O
@@ -157,12 +174,12 @@ com.Apache Software Foundation.Apache-Arrow-Flight-SQL-ODBC.ArrowFlightSQLODBC
 com.Apache Software Foundation.Apache-Arrow-Flight-SQL-ODBC.Docs
 ```
 
-The package requests root authorization. Passwordless `sudo` was not available,
-so the system PKG installation and its postinstall mutation of
-`/Library/ODBC/odbcinst.ini` and `/Library/ODBC/odbc.ini` were not run. Payload
-expansion verified the exact install tree and scripts. Runtime registration was
-tested with a private `ODBCINSTINI` file pointing at the build-tree driver, so
-no user or system ODBC configuration was changed.
+The package requests root authorization. The native ARM64 EC2 rerun installed
+the PKG as root after Rosetta 2 was installed on the Tahoe guest, and its
+postinstall mutation of `/Library/ODBC/odbcinst.ini` and
+`/Library/ODBC/odbc.ini` was verified. The x86_64 evidence above continues to
+use private registration because that earlier guest did not have passwordless
+`sudo`.
 
 ## Driver-manager and connection evidence
 

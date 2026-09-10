@@ -48,6 +48,15 @@ For an Intel build on Apple Silicon, Rosetta and a separate Intel Homebrew
 installation under `/usr/local` are required. Run the build tools themselves
 under Rosetta; do not mix `/opt/homebrew` ARM libraries into the Intel build.
 
+In a noninteractive shell (including an EC2 SSH session), export the native
+Homebrew bin directory before invoking CMake. Arrow's ExternalProject builds
+also resolve Ninja from `PATH`; setting only `CMAKE_MAKE_PROGRAM` does not make
+Ninja visible to every nested project:
+
+```sh
+export PATH=/opt/homebrew/bin:$PATH
+```
+
 ## EC2 Mac validation (native Intel and Apple Silicon)
 
 Use a dedicated EC2 Mac host for each architecture; do not use Rosetta as a
@@ -182,8 +191,9 @@ cmake --build "$BUILD_DIR" --target arrow_flight_sql_odbc_shared -j 8
 cpack --config "$BUILD_DIR/CPackConfig.cmake" -B "$BUILD_DIR"
 ```
 
-For Intel, use `/usr/local` paths, `x86_64`, an Intel Ninja, and invoke both
-CMake commands as `arch -x86_64 /usr/local/bin/cmake ...`. A machine with stale
+For Intel, export `PATH=/usr/local/bin:$PATH`, use `/usr/local` paths,
+`x86_64`, an Intel Ninja, and invoke both CMake commands as
+`arch -x86_64 /usr/local/bin/cmake ...`. A machine with stale
 global headers in `/usr/local/include` may accidentally mix Abseil, Protobuf,
 or ODBC headers into the bundled build. Remove those stale packages or put the
 selected bundled and iODBC headers in an explicit first include directory; the
@@ -349,6 +359,17 @@ tested on a clean Mac with Gatekeeper enabled.
 
 The PKG requires administrator privileges and installs into `/Library/ODBC`.
 Back up any existing configuration before installing:
+
+The current Amazon macOS Tahoe 26.6.2 AMI reports that this unsigned PKG
+requires Rosetta 2 when Rosetta is absent, even though its embedded driver is
+`arm64`. Install Rosetta once on that clean validation guest before running
+`installer`; the driver build, load, and smoke test remain native ARM64. If a
+pristine Tahoe installation without Rosetta is required, treat this as a
+packaging issue and retest after correcting the installer metadata.
+
+```sh
+sudo softwareupdate --install-rosetta --agree-to-license
+```
 
 ```sh
 BACKUP_DIR=$(mktemp -d /tmp/arrow-odbc-backup.XXXXXX)
