@@ -148,12 +148,14 @@ an x86_64 EL-compatible host or VM (the commands below were validated on
 Amazon Linux 2023):
 
 ```bash
-sudo dnf install -y epel-release
-sudo dnf install --enablerepo=crb -y \
+sudo dnf install -y \
   gcc gcc-c++ cmake ninja-build make git rpm-build file \
   unixODBC unixODBC-devel libcurl-devel openssl-devel ca-certificates \
   pkgconf-pkg-config zlib-devel boost-devel libicu-devel
 ```
+
+On AlmaLinux 9, enable the CRB repository first if `boost-devel` or
+`libicu-devel` is not available from the enabled repositories.
 
 Arrow requires CMake 3.25 or newer. If the distribution's CMake is older
 (Amazon Linux 2023 currently ships 3.22), install a newer CMake before running
