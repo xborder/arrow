@@ -129,7 +129,7 @@ package is:
 
 ```text
 apache-arrow-flight-sql-odbc-driver-25.0.1-1.amzn2023.x86_64.rpm
-SHA-256: ae1f60a814870979bd2001afbed2ddc1017ff0e27ecb5cd2b1928ed9fc5f3c1f
+SHA-256: 1fa77f89624ca90231c8e0da75f1cc10ee989406506198b7e7fc18addb29f410
 ```
 
 `rpm -qip`, file-list and dependency inspection, and `ldd` all passed. Installing
