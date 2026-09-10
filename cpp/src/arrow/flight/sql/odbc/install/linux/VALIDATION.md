@@ -121,8 +121,9 @@ then confirmed the ODBC runtime package was installed, the RPM `%post` script
 registered exactly one `Apache Arrow Flight SQL ODBC Driver` entry through
 `odbcinst`, the shared library loaded with `ldd` without missing dependencies,
 and `dnf reinstall` preserved the single registration. Removing the ODBC
-runtime and development packages removed the registration and all package-owned
-ODBC files through `%postun`.
+runtime and development packages removed the registration and runtime
+package-owned ODBC files through `%postun`. The optional debuginfo subpackage
+is not part of the checked-in deliverable.
 
 The checked-in RPM artifact and `RPM-SHA256SUMS` correspond to this native
 packager output:

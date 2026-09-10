@@ -130,7 +130,8 @@ Remove the runtime and development packages and verify `%postun` removed the
 registration and package-owned files:
 
 ```bash
-sudo dnf remove -y arrow2500-flight-sql-odbc-libs arrow-flight-sql-odbc-devel
+sudo dnf remove -y arrow2500-flight-sql-odbc-libs \
+  arrow2500-flight-sql-odbc-libs-debuginfo arrow-flight-sql-odbc-devel
 ! grep -q 'Apache Arrow Flight SQL ODBC Driver' /etc/odbcinst.ini \
   /etc/odbcinst.ini.rpmsave 2>/dev/null
 ! test -e "$driver"
