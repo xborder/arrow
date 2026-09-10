@@ -142,15 +142,15 @@ the host, port, and authentication properties in the normal ODBC connection
 configuration before making a remote query. Never place a Dremio token in a
 repository file, command-line argument, or RPM.
 
-## Existing relocatable tar artifact
+## Checked-in artifact
 
-The checked-in Ubuntu 24.04 x86_64 tar artifact remains available under
-`install/linux/artifacts/`. Verify it independently with:
+The checked-in RPM under `install/linux/artifacts/rpm/` is a native Amazon
+Linux 2023 x86_64 build. Verify its checksum independently with:
 
 ```bash
-cd cpp/src/arrow/flight/sql/odbc/install/linux/artifacts
-sha256sum --check SHA256SUMS
+cd cpp/src/arrow/flight/sql/odbc/install/linux/artifacts/rpm
+sha256sum --check RPM-SHA256SUMS
 ```
 
-The tar artifact is an Ubuntu/glibc build; the RPM must always be rebuilt by
-the native Arrow YUM packager on the oldest supported RPM distribution.
+The RPM must always be rebuilt by the native Arrow YUM packager on the oldest
+supported RPM distribution; do not copy an Ubuntu/glibc build into an RPM.
