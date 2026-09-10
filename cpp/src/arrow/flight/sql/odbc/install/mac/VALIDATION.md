@@ -19,7 +19,7 @@ under the License.
 
 # macOS validation evidence: Arrow Flight SQL ODBC 25.0.1
 
-Validation date: 2026-09-09 (Europe/Lisbon)
+Validation date: 2026-09-10 (Europe/Lisbon)
 
 ## Scope and result
 
@@ -36,14 +36,11 @@ names, code-signature state, and private iODBC registration/load paths were
 checked. The Intel build and smoke test ran under Rosetta because the repository
 CI matrix explicitly supports both Intel and ARM macOS.
 
-The end-to-end result is **not a pass**. A user-supplied credential was injected
-only through a silent process environment and was tested with certificate
-verification enabled. Both architectures failed hostname verification before
-authentication. A diagnostic-only attempt with certificate verification
-disabled and the literal non-credential `invalid-test-value` reached Dremio
-authentication, returned SQLSTATE `28000`, and showed that the program redacts
-its input value. No real credential was sent with certificate verification
-disabled.
+The corrected end-to-end result is **a pass** on native ARM64 and x86_64 under
+Rosetta. A user-supplied credential was injected only through each smoke-test
+process environment. With certificate verification enabled, both drivers
+connected to `data.eu.dremio.cloud:443`, executed
+`SELECT 1 AS odbc_smoke_test`, returned `1`, and released all ODBC resources.
 
 ## Host and toolchain
 
@@ -79,8 +76,8 @@ CMAKE_OSX_ARCHITECTURES=arm64
 CMAKE_OSX_DEPLOYMENT_TARGET=14.0
 ```
 
-Several host-pollution problems were isolated without changing Arrow source or
-the user's global headers:
+Several host-pollution problems were isolated without changing the user's
+global headers:
 
 - the pre-existing `/usr/local/bin/ninja` was Intel-only and caused nested
   external projects to inject x86_64 flags into the ARM build; a native Ninja
@@ -91,6 +88,11 @@ the user's global headers:
   Homebrew iODBC headers;
 - an ignored, build-only first-include directory selected the bundled Abseil
   and Protobuf trees plus the intended iODBC headers;
+- gRPC linked the selected OpenSSL 3 libraries but its TLS sources directly
+  included stale OpenSSL 1.1 headers from `/usr/local/include/openssl`. The
+  resulting header/library mismatch broke peer-certificate extraction and
+  hostname verification. `ThirdpartyToolchain.cmake` now places the selected
+  `OPENSSL_INCLUDE_DIR` first for the `grpc` and `grpc++` targets;
 - the gRPC 1.76.0 archive was retried after a partial transfer and verified as
   SHA-256 `0af37b800953130b47c075b56683ee60bdc3eda3c37fc6004193f5b569758204`.
 
@@ -106,8 +108,8 @@ cmake --build build/macos-arm64-release \
 Results:
 
 - driver: Mach-O 64-bit dynamically linked shared library, `arm64`
-- driver size: approximately 46 MiB
-- package: `ArrowFlightSQLODBC-25.0.1.pkg`, approximately 13 MiB
+- driver size: approximately 45.6 MiB
+- package: `ArrowFlightSQLODBC-25.0.1.pkg`, approximately 12.4 MiB
 - package signature: none
 - driver signature: valid ad-hoc linker signature, no Team ID
 - install name: `@rpath/libarrow_flight_sql_odbc.2500.dylib`
@@ -118,17 +120,24 @@ Results:
 
 ## x86_64 artifact checks
 
-The Intel build completed under Rosetta and produced a 49.4 MiB x86_64 Mach-O
-driver and a 13.2 MiB Apple installer package. It has the same install name,
-library versions, expected ODBC exports, system-only dynamic dependencies, and
-configured `minos 14.0` as the ARM64 artifact. Unlike the ARM64 output's ad-hoc
-linker signature, the x86_64 driver is unsigned; both installer packages are
-unsigned. The x86_64 smoke executable also compiled cleanly with
-`-Wall -Wextra -Werror`, loaded the x86_64 driver through Intel iODBC under
-Rosetta, and exercised the same secure connection path.
+The Intel build completed under Rosetta and produced a 44.4 MiB x86_64 Mach-O
+driver and an 11.2 MiB Apple installer package. It has the same install name,
+library versions, expected ODBC exports, and configured `minos 14.0` as the
+ARM64 artifact. Unlike the ARM64 output's ad-hoc linker signature, the x86_64
+driver is unsigned; both installer packages are unsigned. This diagnostic
+x86_64 build dynamically references Intel Homebrew OpenSSL 3 under
+`/usr/local/opt/openssl@3`, so that runtime is required. The x86_64 smoke
+executable compiled cleanly with `-Wall -Wextra -Werror`, loaded the driver
+through Intel iODBC under Rosetta, and passed the secure query.
 
 The deliverable checksums are recorded in the repository-root
 `ARTIFACTS.sha256` file.
+
+The deliverable PKGs were recreated with Apple's `pkgbuild` and `productbuild`
+from the previously inspected component payloads, replacing only the versioned
+driver with its corrected architecture-specific binary. Each rebuilt package
+was expanded again and its embedded driver compared byte-for-byte with the
+corresponding repository-root dylib.
 
 The expanded PKG contains:
 
@@ -175,12 +184,9 @@ Tests and observations:
    printed only that a short-lived credential is required.
 2. With private driver registration, certificate verification enabled, and a
    user-supplied credential injected only through the environment, iODBC loaded
-   each architecture's driver and attempted TLS to
-   `data.eu.dremio.cloud:443`. Both returned SQLSTATE `08S01` before
-   authentication because gRPC rejected the peer name. An ARM64 gRPC handshaker
-   trace confirmed SNI `data.eu.dremio.cloud`, TLS 1.2 negotiation, and cipher
-   `ECDHE-RSA-AES128-GCM-SHA256` completed successfully before gRPC's
-   post-handshake peer-name matcher rejected the name.
+   each architecture's corrected driver and connected to
+   `data.eu.dremio.cloud:443`. Both completed `SELECT 1`, returned the integer
+   `1`, disconnected, and freed their ODBC handles successfully.
 3. An independent OpenSSL 3.6.1 handshake to the same endpoint and SNI succeeded
    with TLS 1.2. The certificate was issued by Amazon RSA 2048 M04, had subject
    `CN=*.aws.eu.dremio.cloud`, and had SANs `*.aws.eu.dremio.cloud` and
@@ -188,25 +194,23 @@ Tests and observations:
    OpenSSL's `-checkhost data.eu.dremio.cloud` explicitly reported a match. This
    narrows the mismatch to the Arrow/gRPC client path rather than an invalid,
    expired, or non-matching endpoint certificate.
-4. With `useEncryption=true`, certificate verification disabled, and only the
-   literal invalid value, the connection reached Dremio authentication and
-   returned SQLSTATE `28000`. The diagnostic replaced the value with
-   `<redacted>`, and ODBC cleanup succeeded.
+4. Symbol inspection of both corrected binaries found
+   `SSL_get1_peer_certificate`, the OpenSSL 3 API, and did not find the legacy
+   `SSL_get_peer_certificate` path selected by the stale headers.
 
 The exact secure live-test shape is in `BUILDING.md`. It retains
-`disableCertificateVerification=false`, reads `DREMIO_PAT` silently, would run
+`disableCertificateVerification=false`, reads `DREMIO_PAT` silently, runs
 `SELECT 1 AS odbc_smoke_test`, validates the returned integer, unsets the
-environment variable, and reports cleanup. It was executed with the supplied
-credential on both architectures but did not reach the query because of the TLS
-peer-name failure.
+environment variable, and reports cleanup. It passed with the supplied
+credential on both architectures.
 
 ## Credential and cleanup record
 
 The supplied credential was read silently into each smoke-test process, was not
 written to disk or printed, and was absent from the child environment after each
 process exited. The sample contains no credential, username, project ID, or
-secret output. The only value sent with certificate verification disabled was
-the literal `invalid-test-value`.
+secret output. Certificate verification remained enabled for both successful
+tests.
 
 No system package was installed and no system/user ODBC configuration was
 changed. Build-only private registration files remain under ignored `build/`
@@ -215,14 +219,9 @@ were removed after artifact generation; pre-existing OpenSSL was retained.
 
 ## Remaining validation
 
-An end-to-end pass requires all of the following on a suitable macOS test host:
+The remaining distribution checks are:
 
-1. Resolve why the Arrow/gRPC TLS path rejects a hostname covered by the
-   presented certificate, without disabling certificate verification.
-2. Install the PKG with administrator privileges and verify the postinstall
+1. Install each PKG with administrator privileges and verify the postinstall
    registration in `/Library/ODBC`.
-3. After resolving TLS verification, supply a short-lived PAT through
-   `DREMIO_PAT`, execute the checked-in smoke test, observe
-   `odbc_smoke_test=1`, and confirm successful disconnect/free.
-4. Repeat runtime loading and the authenticated query natively on Intel macOS;
+2. Repeat runtime loading and the authenticated query natively on Intel macOS;
    Rosetta build/load evidence alone is not a native Intel runtime result.

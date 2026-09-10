@@ -3317,6 +3317,23 @@ function(build_grpc)
 
   fetchcontent_makeavailable(grpc)
 
+  # gRPC's custom SSL provider links against the OpenSSL targets above, but
+  # its TLS sources include OpenSSL headers directly. Keep those headers
+  # paired with the selected libraries. This is especially important on
+  # macOS, where a stale /usr/local/include/openssl can otherwise be selected
+  # while OpenSSL 3 is linked from another prefix.
+  if(OPENSSL_INCLUDE_DIR)
+    foreach(target grpc grpc++)
+      if(TARGET ${target})
+        # Use -I instead of target_include_directories(). The latter can be
+        # emitted as -isystem when the same directory is also supplied by an
+        # imported OpenSSL target, which still loses to macOS's implicit
+        # /usr/local/include search path.
+        target_compile_options(${target} BEFORE PRIVATE "-I${OPENSSL_INCLUDE_DIR}")
+      endif()
+    endforeach()
+  endif()
+
   if(CMAKE_VERSION VERSION_LESS 3.28)
     set_property(DIRECTORY ${grpc_SOURCE_DIR} PROPERTY EXCLUDE_FROM_ALL TRUE)
   endif()
