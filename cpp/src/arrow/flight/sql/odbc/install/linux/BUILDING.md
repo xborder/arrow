@@ -118,6 +118,29 @@ explicit TODO messages for both formats, leaves the Linux ODBC and documentation
 install directories unset, and selects no Linux CPack generator. Therefore the
 validated deliverable is a relocatable tar archive, not a DEB or RPM.
 
+### RPM through the full Arrow release packager
+
+The repository also has a separate full-Arrow RPM workflow. It rebuilds Arrow
+from source on an RPM-based container and emits an ODBC runtime subpackage; it
+does not convert the already-built Ubuntu `.so` into an RPM. To build the
+25.0.1 RPMs, start from the exact release commit in a clean worktree and run:
+
+```bash
+git worktree add ../arrow-25.0.1-rpm \
+  beccec0d0c451b7aa3e4530416ac431b3c035c69
+cd ../arrow-25.0.1-rpm/dev/tasks/linux-packages/apache-arrow
+rake yum:build YUM_TARGETS=almalinux-9
+```
+
+The command requires Ruby, Docker, and the RPM-packaging container images. The
+result is under
+`yum/repositories/almalinux/9/x86_64/Packages/`. The ODBC runtime package is
+named `apache-arrow2500-flight-sql-odbc-libs` for Arrow 25.0.1 and is built
+alongside the Arrow, Flight, and Flight SQL runtime packages it depends on. The
+RPM spec registers the driver with `odbcinst` after installation. The general
+workflow, supported targets, and console debugging mode are documented in
+`dev/tasks/linux-packages/README.md`.
+
 Create the stripped direct library, tar archive, smoke-test binary, and
 `SHA256SUMS` in the Linux-only artifact directory:
 
