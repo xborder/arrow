@@ -107,13 +107,14 @@ produce an archive, but inspection showed a generic Arrow library layout and no
 unixODBC registration scripts. It is not a complete Linux ODBC installation
 artifact.
 
-The repository's separate full-Arrow release packager does have an RPM path:
-`dev/tasks/linux-packages/apache-arrow/yum/arrow.spec.in` defines the
-`apache-arrow2500-flight-sql-odbc-libs` subpackage, its runtime dependency, and
-`odbcinst` post-install registration. That workflow rebuilds the full Arrow
-source tree in an RPM-based container; it was not run as part of this Ubuntu
-ABI/live-query validation. The exact command and clean-worktree setup are in
-the RPM section of `BUILDING.md`.
+The repository's separate full-Arrow release packager has a documented RPM
+path in `dev/tasks/linux-packages/README.md`. The ODBC subpackage and its
+`odbcinst` post-install registration were added after the 25.0.1 release; the
+25.0.1 release spec therefore does not produce an ODBC RPM by itself. A 25.0.1
+RPM requires backporting that spec/build change (or writing a standalone RPM
+spec) and rebuilding in an RPM-based container. The command and caveat are in
+the RPM section of `BUILDING.md`; that workflow was not run as part of this
+Ubuntu ABI/live-query validation.
 
 The validated deliverable is therefore the versioned x86_64 driver plus a
 relocatable tar archive with explicit `install.sh` and `uninstall.sh`, an

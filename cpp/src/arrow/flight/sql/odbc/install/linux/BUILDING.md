@@ -120,26 +120,31 @@ validated deliverable is a relocatable tar archive, not a DEB or RPM.
 
 ### RPM through the full Arrow release packager
 
-The repository also has a separate full-Arrow RPM workflow. It rebuilds Arrow
-from source on an RPM-based container and emits an ODBC runtime subpackage; it
-does not convert the already-built Ubuntu `.so` into an RPM. To build the
-25.0.1 RPMs, start from the exact release commit in a clean worktree and run:
+The repository has a separate full-Arrow RPM workflow, documented in
+`dev/tasks/linux-packages/README.md`. It rebuilds Arrow from source on an
+RPM-based container; it does not convert the already-built Ubuntu `.so` into an
+RPM. The ODBC runtime subpackage was added after the 25.0.1 release, so the
+25.0.1 release spec itself cannot produce an ODBC RPM without backporting that
+spec/build change.
+
+On a checkout that contains the ODBC RPM spec (including current `main`), run:
 
 ```bash
-git worktree add ../arrow-25.0.1-rpm \
-  beccec0d0c451b7aa3e4530416ac431b3c035c69
-cd ../arrow-25.0.1-rpm/dev/tasks/linux-packages/apache-arrow
+cd dev/tasks/linux-packages/apache-arrow
 rake yum:build YUM_TARGETS=almalinux-9
 ```
 
 The command requires Ruby, Docker, and the RPM-packaging container images. The
 result is under
 `yum/repositories/almalinux/9/x86_64/Packages/`. The ODBC runtime package is
-named `apache-arrow2500-flight-sql-odbc-libs` for Arrow 25.0.1 and is built
-alongside the Arrow, Flight, and Flight SQL runtime packages it depends on. The
-RPM spec registers the driver with `odbcinst` after installation. The general
-workflow, supported targets, and console debugging mode are documented in
-`dev/tasks/linux-packages/README.md`.
+named `apache-arrow<so_version>-flight-sql-odbc-libs` and is built alongside the
+Arrow, Flight, and Flight SQL runtime packages it depends on. The RPM spec
+registers the driver with `odbcinst` after installation. To make a 25.0.1 RPM,
+backport the ODBC RPM spec/build changes onto the 25.0.1 source first, then run
+the same `rake yum:build` command from that clean checkout. A standalone spec
+can also package the existing `.so`, but it must declare the correct runtime
+dependencies and `odbcinst` `%post`/`%postun` registration; it is not a native
+RPM rebuild of the Ubuntu binary.
 
 Create the stripped direct library, tar archive, smoke-test binary, and
 `SHA256SUMS` in the Linux-only artifact directory:
