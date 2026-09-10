@@ -48,6 +48,72 @@ For an Intel build on Apple Silicon, Rosetta and a separate Intel Homebrew
 installation under `/usr/local` are required. Run the build tools themselves
 under Rosetta; do not mix `/opt/homebrew` ARM libraries into the Intel build.
 
+## EC2 Mac validation (native Intel and Apple Silicon)
+
+Use a dedicated EC2 Mac host for each architecture; do not use Rosetta as a
+replacement for Intel validation. The AMI and host type must match:
+
+| Build | AMI family | EC2 host type |
+|---|---|---|
+| x86_64 | macOS Sequoia 15.x (`x86_64_mac`) | `mac1.metal` |
+| arm64 | macOS Tahoe 26.x (`arm64_mac`) | `mac2.metal`, `mac2-m2.metal`, `mac2-m2pro.metal`, or a supported `mac-m4*` type |
+
+AMI IDs are region-specific. Query the current public Amazon images instead of
+copying an ID from another region:
+
+```sh
+aws ec2 describe-images --owners amazon \
+  --filters Name=state,Values=available Name=name,Values='amzn-ec2-macos-15*-*' \
+  --query 'sort_by(Images,&CreationDate)[-1].{Id:ImageId,Name:Name,Arch:Architecture}'
+aws ec2 describe-images --owners amazon \
+  --filters Name=state,Values=available Name=name,Values='amzn-ec2-macos-26*-arm64' \
+  --query 'sort_by(Images,&CreationDate)[-1].{Id:ImageId,Name:Name,Arch:Architecture}'
+```
+
+Allocate the Apple Silicon host and wait for `State=available` before launching
+the instance. Capacity is availability-zone specific; query offerings and try
+another allowed `mac2*`/`mac-m4*` type or AZ if the request is refused:
+
+```sh
+aws ec2 describe-instance-type-offerings --location-type availability-zone \
+  --filters Name=instance-type,Values=mac2.metal,mac2-m2.metal,mac2-m2pro.metal,mac-m4.metal,mac-m4pro.metal,mac-m4max.metal \
+  --query 'InstanceTypeOfferings[].{Type:InstanceType,AZ:Location}'
+aws ec2 allocate-hosts --instance-type mac2-m2pro.metal \
+  --availability-zone us-east-1c --quantity 1 --auto-placement off \
+  --tag-specifications 'ResourceType=dedicated-host,Tags=[{Key=Purpose,Value=arrow-odbc-validation}]'
+aws ec2 wait host-available --host-ids <arm-host-id>
+```
+
+Launch one instance per host, using a temporary key and an SSH-only security
+group. Confirm the architecture and OS from inside each guest before building:
+
+```sh
+aws ec2 run-instances --image-id <sequoia-x86-ami> --instance-type mac1.metal \
+  --placement HostId=<mac1-host-id> --subnet-id <subnet-in-that-az> \
+  --security-group-ids <temporary-ssh-group> --key-name <temporary-key> \
+  --associate-public-ip-address --tag-specifications \
+  'ResourceType=instance,Tags=[{Key=Purpose,Value=arrow-odbc-validation}]'
+
+aws ec2 run-instances --image-id <tahoe-arm64-ami> --instance-type mac2-m2pro.metal \
+  --placement HostId=<arm-host-id> --subnet-id <subnet-in-that-az> \
+  --security-group-ids <temporary-ssh-group> --key-name <temporary-key> \
+  --associate-public-ip-address --tag-specifications \
+  'ResourceType=instance,Tags=[{Key=Purpose,Value=arrow-odbc-validation}]'
+
+ssh -i <temporary-key>.pem ec2-user@<address> 'uname -m; sw_vers; df -h /'
+```
+
+Run the architecture-specific configure/build commands in this document on
+the corresponding guest. Generate and verify the DMG with `hdiutil create`,
+mount it read-only, confirm it contains the expected PKG, and detach it. Then
+install the PKG on the clean guest and run the smoke test below. Enter the PAT
+only at the silent prompt; never put it in an AMI, command line, log, or file.
+
+When validation ends, terminate both instances, delete the temporary key pair
+and security group, and release every dedicated host. EC2 Mac hosts have a
+24-hour minimum allocation period; if release is rejected before that period,
+record the host ID and release-eligible time and release it afterward.
+
 ## Check out the exact source
 
 ```sh
