@@ -1,6 +1,6 @@
 # Apache Arrow Flight SQL ODBC 25.0.1 Linux validation
 
-Validation date: 2026-09-09
+Validation date: 2026-09-10
 
 Source commit: `beccec0d0c451b7aa3e4530416ac431b3c035c69`
 
@@ -18,13 +18,20 @@ Source tag: `apache-arrow-25.0.1`
 | Isolated unixODBC registration | PASS |
 | Authenticated `SELECT 1` against Dremio Cloud | PASS, 3/3 |
 | Cursor, statement, connection, and environment cleanup | PASS, 3/3 |
-| Installer idempotence and registration ownership guards | PASS |
-| Reproducible archive, checksum, install, load, and uninstall | PASS |
-| EL-compatible 25.0.1 standalone RPM build and checksum | PASS |
+| Relocatable tar archive, checksum, install, load, and uninstall | PASS |
+| Upstream ODBC RPM commits cherry-picked onto 25.0.1 | PASS, no conflicts |
+| Native Arrow YUM RPM build on Amazon Linux 2023 | PASS |
+| Native ODBC RPM metadata, dependencies, and file list | PASS |
 | RPM install, reinstall, unixODBC registration, dynamic load, and removal | PASS |
-| Credential file removal | PASS |
+| AWS validation resources and credential file removal | PASS |
 
 ## Environment
+
+The tar/driver validation used the same Ubuntu version, architecture,
+bundled-dependency mode, and disabled shared dependency linkage as Arrow's
+`odbc-linux` CI job and `ubuntu-cpp-odbc` Compose service. CMake reported Arrow
+25.0.1, x86_64, and the Release configuration. The build completed the
+`install` target successfully.
 
 - Container image:
   `apache/arrow-dev@sha256:a887c3bfb5262539c9046d414a8dfa9390c65358019e760128e8104e86041b36`
@@ -32,29 +39,16 @@ Source tag: `apache-arrow-25.0.1`
 - Distribution: Ubuntu 24.04.4 LTS.
 - Toolchain: GCC/G++ 13.3.0, CMake 3.28.3, Ninja 1.11.1.
 - Runtime: glibc 2.39 and unixODBC 2.3.12.
-- Execution host: Apple Silicon, using an aarch64 Colima VM and Rosetta to run
-  the complete amd64 container userspace.
 
-The RPM build and lifecycle validation used disposable x86_64 Amazon Linux 2023
-VMs in the AWS Dremio Alliances account. They used GCC 11.5.0, CMake 3.31.10 in
-the initial validation and 4.4.3 for the final artifact rebuild, Ninja 1.10.2,
-RPM 4.16.1.3, glibc 2.34, and unixODBC 2.3.9. Both VMs were terminated after
-validation; their temporary security groups and EC2 key pairs were deleted as
-well.
+The RPM validation used a disposable native x86_64 Amazon Linux 2023 VM in
+the AWS Dremio Alliances account. The host had Docker Engine, Ruby, Git, and
+CA certificates; Arrow's build dependencies were installed by the native
+`amazon-linux-2023` YUM packager container. The VM had at least 16 vCPUs,
+64 GiB RAM, and 100 GiB of encrypted gp3 storage. It was terminated after the
+tests, its temporary security group and EC2 key pair were deleted, and no
+temporary credential file remained locally.
 
-The compiler, linker, unixODBC driver manager, driver, and smoke-test process
-were x86_64. This validates the Linux x86_64 ABI and end-to-end behavior, but it
-is not a native x86_64 performance result.
-
-## Build evidence
-
-The build used the same Ubuntu version, architecture, bundled-dependency mode,
-and disabled shared dependency linkage as Arrow's `odbc-linux` CI job and
-`ubuntu-cpp-odbc` Compose service. CMake reported Arrow 25.0.1, x86_64, and the
-Release configuration. The build completed the `install` target successfully.
-It began at four-way parallelism and resumed the same Ninja graph at eight-way
-parallelism after an intentional clean interrupt; no configuration or source
-changed at that boundary.
+## Build and driver evidence
 
 The unstripped result was 60.4 MiB and identified as:
 
@@ -71,115 +65,85 @@ points such as `SQLDisconnect`, `SQLFetch`, and `SQLCloseCursor`.
 Direct dynamic dependencies were `libcurl.so.4`, `libodbcinst.so.2`,
 `libstdc++.so.6`, `libm.so.6`, `libgcc_s.so.1`, `libc.so.6`, and the x86_64
 loader. `ldd` resolved those and every transitive dependency. No dynamic Arrow,
-Flight, Flight SQL, gRPC, or Protobuf library was required.
-
-## TLS, registration, and query evidence
+Flight, Flight SQL, gRPC, or Protobuf library was required by the relocatable
+driver build.
 
 An independent OpenSSL preflight against `data.eu.dremio.cloud:443`, with SNI,
 `-verify_hostname`, and `-verify_return_error`, reported `Verification: OK` and
-`Verify return code: 0 (ok)`.
+`Verify return code: 0 (ok)`. The compiled smoke client then performed three
+independent authenticated cycles. Every cycle reported connection success,
+`SELECT 1`, result `1`, successful cursor close, statement free, disconnect,
+connection free, environment free, and `smoke test: PASS`.
 
-The driver was then registered in an isolated mode-0600 `odbcinst.ini`. The
-registered `Driver` and `Setup` values both resolved to the just-built shared
-library; no host or container system ODBC configuration was modified.
+The driver was registered in an isolated mode-0600 `odbcinst.ini`; no host or
+container system ODBC configuration was modified. The relocatable archive
+passed checksum verification, extraction, installation at the default prefix,
+repeat installation with `UsageCount=1`, dynamic loading, documentation
+installation, unregistration, and exact-prefix file removal.
 
-The compiled smoke client performed three independent cycles. Every cycle
-reported:
+## Backport and native RPM evidence
 
-```text
-connection: success (TLS certificate verification enabled)
-query: SELECT 1
-result: 1
-cleanup: close cursor: success
-cleanup: free statement: success
-cleanup: disconnect: success
-cleanup: free connection: success
-cleanup: free environment: success
-smoke test: PASS
-```
+The exact 25.0.1 tag predates ODBC RPM support. The following upstream fixes
+were cherry-picked in order onto that tag, with no conflicts:
 
-This directly covers the connect, execute, fetch, cursor close, disconnect, and
-handle-destruction path that a compile-only check would miss.
+1. `a1ec26fa34a5a24b260a48233942376cbd6b4ba1` (GH-47877): enable and split
+   the ODBC runtime and development RPM packages.
+2. `63fde363e2fc6f6cbfe94e99b3083ea013b25445` (GH-50518): install the generated
+   `odbcinst` template and register/unregister the driver in RPM scripts.
+3. `4dd7eb75eadf5129741888f261b6b2a74128fa11` (GH-50697): include ODBC
+   documentation and correct installer behavior.
 
-## Packaging decision
-
-With `ARROW_FLIGHT_SQL_ODBC_INSTALLER=ON`, the pinned source prints:
+The patched checkout was archived at the path expected by Arrow's stable
+release Rake task, then built with the repository's original command:
 
 ```text
-ODBC_PACKAGE_FORMAT DEB not implemented, see GH-49595
-ODBC_PACKAGE_FORMAT RPM not implemented, see GH-47977
+rake yum:build YUM_TARGETS=amazon-linux-2023
 ```
 
-The Linux branch sets no DEB or RPM generator and contains the additional TODO
-to create a Linux installer. Manually forcing CPack's generic TGZ generator did
-produce an archive, but inspection showed a generic Arrow library layout and no
-unixODBC registration scripts. It is not a complete Linux ODBC installation
-artifact.
-
-The repository's separate full-Arrow release packager has a documented RPM
-path in `dev/tasks/linux-packages/README.md`. The ODBC subpackage and its
-`odbcinst` post-install registration were added after the 25.0.1 release, so
-the 25.0.1 release spec does not produce an ODBC RPM by itself. This branch's
-standalone spec supplies that missing package without replacing the full-Arrow
-packager.
-
-The standalone RPM was built from the exact 25.0.1 source on the EL-compatible
-VM with bundled Arrow/Flight/gRPC/Protobuf dependencies and the system OpenSSL,
-unixODBC, ICU, and C/C++ runtime libraries dynamically linked. The resulting
-package is:
+The build produced the upstream-native split packages:
 
 ```text
-apache-arrow-flight-sql-odbc-driver-25.0.1-1.amzn2023.x86_64.rpm
-SHA-256: 1fa77f89624ca90231c8e0da75f1cc10ee989406506198b7e7fc18addb29f410
+arrow2500-flight-sql-odbc-libs-25.0.1-*.x86_64.rpm
+arrow-flight-sql-odbc-devel-25.0.1-*.x86_64.rpm
 ```
 
-`rpm -qip`, file-list and dependency inspection, and `ldd` all passed. Installing
-the RPM registered `Apache Arrow Flight SQL ODBC Driver` at
-`/opt/arrow-flight-sql-odbc-driver/lib64/libarrow_flight_sql_odbc.so` and added
-the sample `Apache Arrow Flight SQL ODBC DSN`; reinstalling left one driver
-registration; removing the package removed both registrations and all package
-files. The package intentionally uses an `Apache`-prefixed driver name and the
-same `/opt/.../lib64` and `/opt/.../conf` layout as Dremio's package, so it does
-not overwrite a separately installed Dremio driver. It relies on the system CA
-store and RPM-discovered runtime dependencies rather than bundling a private
-CA bundle.
+The runtime package installs `libarrow_flight_sql_odbc.so.*` under
+`/usr/lib64`, installs the generated template under
+`/usr/share/arrow/flight/sql/odbc/`, and requires the matching
+`arrow2500-flight-sql-libs` package. It is therefore intentionally different
+from Dremio's standalone `/opt` package: the native Arrow RPM is part of the
+Arrow RPM repository and uses the normal Arrow runtime/development dependency
+graph. Package metadata, file lists, and dependencies were inspected with
+`rpm -qip`, `rpm -qpl`, and `rpm -qp --requires`.
 
-The validated deliverables are therefore the versioned x86_64 driver, the
-relocatable tar archive with explicit `install.sh` and `uninstall.sh`, and the
-standalone RPM with `%post`/`%postun` unixODBC integration. The artifact
-directory also contains the `odbcinst.ini` template, smoke-test source and
-binary, licenses, this report, and the build runbook. `SHA256SUMS` and
-`rpm/RPM-SHA256SUMS` authenticate the tar and RPM deliverables respectively.
+The complete RPM set from that repository was installed with DNF. Validation
+then confirmed the ODBC runtime package was installed, the RPM `%post` script
+registered exactly one `Apache Arrow Flight SQL ODBC Driver` entry through
+`odbcinst`, the shared library loaded with `ldd` without missing dependencies,
+and `dnf reinstall` preserved the single registration. Removing the ODBC
+runtime and development packages removed the registration and all package-owned
+ODBC files through `%postun`.
 
-The stripped direct driver was 47 MiB and the archive was 16 MiB. Two packaging
-runs produced identical SHA-256 values. The exact archive then passed checksum
-verification, extraction, installation at the default prefix, repeat
-installation with `UsageCount=1`, dynamic loading, documentation installation,
-unregistration, and exact-prefix file removal.
+The checked-in RPM artifact and `RPM-SHA256SUMS` correspond to this native
+packager output. The tar checksum file remains independent and covers the
+Ubuntu/glibc relocatable artifact.
 
 ## Installer and credential safety
 
-The installer tests used an isolated unixODBC configuration and verified:
-
-- initial registration succeeds;
-- reinstall at the same prefix is idempotent and leaves `UsageCount=1`;
-- install refuses to replace a same-name driver registered at another path;
-- uninstall refuses to remove a same-name driver registered at another path;
-- uninstall removes its own registration and exact installed files.
-
 The Dremio token was never placed in a repository file, ODBC configuration,
-command-line argument, or artifact. It was read from a root-owned mode-0600
-container secret file. Diagnostic text was redacted by the smoke client, driver
-logging was disabled, and a shell trap deleted the secret file immediately after
-the three live attempts. A follow-up existence check passed. Because the token
-was originally supplied through an interactive conversation, it should still be
-revoked after validation.
+command-line argument, or artifact. It was read only from a root-owned
+mode-0600 temporary secret file, diagnostic output was redacted, and a shell
+trap deleted the file immediately after the live attempts. A follow-up
+existence check passed. The token should be revoked after validation because it
+was supplied interactively.
 
 ## Limitations
 
-- Functional and ABI behavior was validated under translated x86_64 container
-  execution rather than bare-metal x86_64 Linux.
+- Functional and ABI behavior of the tar artifact was validated under
+  translated x86_64 container execution; the RPM build and lifecycle were
+  validated on native x86_64 Amazon Linux 2023.
 - This is not a performance, load, failover, or broad SQL conformance test.
-- The tar artifact is an Ubuntu 24.04 / glibc 2.39 build. The RPM artifact is an
-  Amazon Linux 2023 / glibc 2.34 build; compatibility with other RPM
-  distributions still requires validation on the oldest supported target.
+- The tar artifact is an Ubuntu 24.04 / glibc 2.39 build. The RPM artifact is
+  an Amazon Linux 2023 / glibc 2.34 build; compatibility with another RPM
+  distribution still requires validation on that distribution's oldest
+  supported release.
