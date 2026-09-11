@@ -18,6 +18,7 @@
 #include "arrow/flight/transport/grpc/grpc_client.h"
 
 #include <condition_variable>
+#include <atomic>
 #include <deque>
 #include <map>
 #include <memory>
@@ -93,6 +94,48 @@ struct ClientRpc {
     }
     return Status::OK();
   }
+};
+
+/// Bridge Arrow's cooperative StopToken to a blocking unary gRPC call.
+///
+/// gRPC's synchronous unary API does not expose a waitable cancellation hook, while
+/// StopToken intentionally exposes polling only.  A small watcher is therefore scoped
+/// to PollFlightInfo calls and interrupts ClientContext promptly when SQLCancel requests
+/// the statement StopSource.
+class StopTokenRpcCanceller {
+ public:
+  StopTokenRpcCanceller(StopToken stop_token, ::grpc::ClientContext* context)
+      : stop_token_(std::move(stop_token)), context_(context) {
+    watcher_ = std::thread([this]() {
+      std::unique_lock<std::mutex> lock(mutex_);
+      while (!done_) {
+        condition_.wait_for(lock, std::chrono::milliseconds(10),
+                            [this]() { return done_; });
+        if (!done_ && stop_token_.IsStopRequested()) {
+          lock.unlock();
+          context_->TryCancel();
+          return;
+        }
+      }
+    });
+  }
+
+  ~StopTokenRpcCanceller() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      done_ = true;
+    }
+    condition_.notify_one();
+    watcher_.join();
+  }
+
+ private:
+  StopToken stop_token_;
+  ::grpc::ClientContext* context_;
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  bool done_ = false;
+  std::thread watcher_;
 };
 
 class GrpcAddClientHeaders : public AddCallHeaders {
@@ -970,8 +1013,12 @@ class GrpcClientImpl : public internal::ClientTransport {
 
     ClientRpc rpc(options);
     RETURN_NOT_OK(rpc.SetToken(auth_handler_.get()));
+    StopTokenRpcCanceller canceller(options.stop_token, &rpc.context);
     Status s = FromGrpcStatus(
         stub_->PollFlightInfo(&rpc.context, pb_descriptor, &pb_response), &rpc.context);
+    if (options.stop_token.IsStopRequested()) {
+      return options.stop_token.Poll();
+    }
     RETURN_NOT_OK(s);
 
     info->reset(new PollInfo());
