@@ -25,10 +25,23 @@
 
 #include "arrow/flight/sql/odbc/odbc_impl/flight_sql_result_set_column.h"
 #include "arrow/flight/sql/odbc/odbc_impl/flight_sql_result_set_metadata.h"
+#include "arrow/flight/sql/odbc/odbc_impl/polling_flight_sql_client.h"
 #include "arrow/flight/sql/odbc/odbc_impl/types.h"
 #include "arrow/flight/sql/odbc/odbc_impl/util.h"
 
 namespace arrow::flight::sql::odbc {
+namespace {
+
+std::shared_ptr<internal::ProgressivePollInfoOperation> TakeProgressiveOperation(
+    FlightSqlClient& flight_sql_client) {
+  auto* polling_client = dynamic_cast<PollingFlightSqlClient*>(&flight_sql_client);
+  if (polling_client == nullptr) {
+    return nullptr;
+  }
+  return polling_client->TakeProgressiveOperation();
+}
+
+}  // namespace
 
 FlightSqlResultSet::FlightSqlResultSet(
     FlightSqlClient& flight_sql_client, const FlightClientOptions& client_options,
@@ -36,8 +49,9 @@ FlightSqlResultSet::FlightSqlResultSet(
     const std::shared_ptr<RecordBatchTransformer>& transformer, Diagnostics& diagnostics,
     const MetadataSettings& metadata_settings)
     : metadata_settings_(metadata_settings),
+      poll_info_operation_(TakeProgressiveOperation(flight_sql_client)),
       chunk_buffer_(flight_sql_client, client_options, call_options, flight_info,
-                    metadata_settings_.chunk_buffer_capacity),
+                    metadata_settings_.chunk_buffer_capacity, poll_info_operation_),
       transformer_(transformer),
       metadata_(transformer
                     ? new FlightSqlResultSetMetadata(transformer->GetTransformedSchema(),

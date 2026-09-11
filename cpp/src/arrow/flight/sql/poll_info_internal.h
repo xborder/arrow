@@ -27,6 +27,33 @@
 
 namespace arrow::flight::sql::internal {
 
+class PollInfoRpcClient;
+
+/// State for demand-driven consumption of cumulative PollInfo endpoints.
+///
+/// Start() returns once the server publishes an endpoint or completes.  Each
+/// PollNextAvailable() call then follows continuation descriptors until another
+/// endpoint is appended, the operation completes, or the poll fails.
+class ARROW_FLIGHT_SQL_EXPORT ProgressivePollInfoOperation {
+ public:
+  ProgressivePollInfoOperation(PollInfoRpcClient* client,
+                               const FlightCallOptions& options,
+                               const FlightDescriptor& original_descriptor);
+  ~ProgressivePollInfoOperation();
+
+  arrow::Result<std::unique_ptr<FlightInfo>> Start(
+      bool* initial_poll_unimplemented = nullptr);
+  arrow::Result<std::unique_ptr<FlightInfo>> PollNextAvailable();
+
+  /// Best-effort cleanup for an abandoned incomplete result.
+  void Cancel();
+  bool is_complete() const;
+
+ private:
+  class Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
 /// Internal seam for exercising the synchronous PollInfo orchestration without a
 /// transport.  Production callers should use FlightClientPollInfoRpcClient.
 class ARROW_FLIGHT_SQL_EXPORT PollInfoRpcClient {
@@ -51,8 +78,7 @@ class ARROW_FLIGHT_SQL_EXPORT FlightClientPollInfoRpcClient final
   arrow::Result<std::unique_ptr<FlightInfo>> GetFlightInfo(
       const FlightCallOptions& options, const FlightDescriptor& descriptor) override;
   arrow::Result<CancelFlightInfoResult> CancelFlightInfo(
-      const FlightCallOptions& options,
-      const CancelFlightInfoRequest& request) override;
+      const FlightCallOptions& options, const CancelFlightInfoRequest& request) override;
 
  private:
   FlightClient* client_;

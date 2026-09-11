@@ -40,20 +40,32 @@ namespace arrow::flight::sql::odbc {
 namespace {
 
 std::unique_ptr<FlightInfo> MakeInfo(const FlightDescriptor& descriptor,
-                                     const std::string& ticket) {
+                                     const std::vector<std::string>& tickets) {
   auto schema = arrow::schema({arrow::field("value", arrow::int64())});
-  std::vector<FlightEndpoint> endpoints = {
-      FlightEndpoint{Ticket{ticket}, {}, std::nullopt, ""}};
+  std::vector<FlightEndpoint> endpoints;
+  for (const auto& ticket : tickets) {
+    endpoints.emplace_back(Ticket{ticket}, std::vector<Location>{}, std::nullopt, "");
+  }
   return std::make_unique<FlightInfo>(
       FlightInfo::Make(*schema, descriptor, endpoints, -1, -1, false).ValueOrDie());
+}
+
+std::unique_ptr<FlightInfo> MakeInfo(const FlightDescriptor& descriptor,
+                                     const std::string& ticket) {
+  return MakeInfo(descriptor, std::vector<std::string>{ticket});
+}
+
+std::unique_ptr<PollInfo> MakePoll(const FlightDescriptor& request,
+                                   const std::vector<std::string>& tickets,
+                                   std::optional<FlightDescriptor> continuation) {
+  return std::make_unique<PollInfo>(MakeInfo(request, tickets), std::move(continuation),
+                                    std::nullopt, std::nullopt);
 }
 
 std::unique_ptr<PollInfo> MakePoll(const FlightDescriptor& request,
                                    const std::string& ticket,
                                    std::optional<FlightDescriptor> continuation) {
-  return std::make_unique<PollInfo>(MakeInfo(request, ticket),
-                                    std::move(continuation), std::nullopt,
-                                    std::nullopt);
+  return MakePoll(request, std::vector<std::string>{ticket}, std::move(continuation));
 }
 
 FlightDescriptor CommandDescriptor(const std::string& type_name) {
@@ -135,14 +147,18 @@ TEST(PollInfoOrchestrationTest, ImmediateReturnsFinalCumulativeInfo) {
   EXPECT_EQ("final", result->endpoints()[0].ticket.ticket);
 }
 
-TEST(PollInfoOrchestrationTest, DrainsContinuationsAndIgnoresPartialInfo) {
+TEST(PollInfoOrchestrationTest, DrainsContinuationsAndPreservesAppendOnlyPrefix) {
   FakePollInfoRpcClient client;
   const auto original = CommandDescriptor("CommandStatementQuery");
   const auto first = FlightDescriptor::Command("continuation-1");
   const auto second = FlightDescriptor::Command("continuation-2");
   client.polls.push_back({Status::OK(), MakePoll(original, "partial-1", first)});
-  client.polls.push_back({Status::OK(), MakePoll(first, "partial-2", second)});
-  client.polls.push_back({Status::OK(), MakePoll(second, "final", std::nullopt)});
+  client.polls.push_back(
+      {Status::OK(),
+       MakePoll(first, std::vector<std::string>{"partial-1", "partial-2"}, second)});
+  client.polls.push_back(
+      {Status::OK(),
+       MakePoll(second, {"partial-1", "partial-2", "final"}, std::nullopt)});
 
   ASSERT_OK_AND_ASSIGN(auto result,
                        internal::PollFlightInfoUntilComplete(&client, {}, original));
@@ -151,7 +167,8 @@ TEST(PollInfoOrchestrationTest, DrainsContinuationsAndIgnoresPartialInfo) {
   EXPECT_TRUE(client.poll_descriptors[1].Equals(first));
   EXPECT_TRUE(client.poll_descriptors[2].Equals(second));
   EXPECT_EQ(0U, client.get_count);
-  EXPECT_EQ("final", result->endpoints()[0].ticket.ticket);
+  ASSERT_EQ(3U, result->endpoints().size());
+  EXPECT_EQ("final", result->endpoints()[2].ticket.ticket);
 }
 
 TEST(PollInfoOrchestrationTest, InitialUnimplementedFallsBackExactlyOnce) {
@@ -173,8 +190,7 @@ TEST(PollInfoOrchestrationTest, NonInitialUnimplementedDoesNotFallback) {
   FakePollInfoRpcClient client;
   const auto original = CommandDescriptor("CommandStatementQuery");
   const auto continuation = FlightDescriptor::Command("continuation");
-  client.polls.push_back(
-      {Status::OK(), MakePoll(original, "partial", continuation)});
+  client.polls.push_back({Status::OK(), MakePoll(original, "partial", continuation)});
   client.polls.push_back({Status::NotImplemented("expired continuation"), nullptr});
 
   auto result = internal::PollFlightInfoUntilComplete(&client, {}, original);
@@ -198,13 +214,15 @@ TEST(PollInfoOrchestrationTest, OneDeadlineShrinksAcrossContinuations) {
   const auto original = CommandDescriptor("CommandStatementQuery");
   const auto first = FlightDescriptor::Command("continuation-1");
   const auto second = FlightDescriptor::Command("continuation-2");
+  client.polls.push_back({Status::OK(), MakePoll(original, "partial-1", first),
+                          std::chrono::milliseconds(20)});
   client.polls.push_back(
-      {Status::OK(), MakePoll(original, "partial-1", first),
+      {Status::OK(),
+       MakePoll(first, std::vector<std::string>{"partial-1", "partial-2"}, second),
        std::chrono::milliseconds(20)});
   client.polls.push_back(
-      {Status::OK(), MakePoll(first, "partial-2", second),
-       std::chrono::milliseconds(20)});
-  client.polls.push_back({Status::OK(), MakePoll(second, "final", std::nullopt)});
+      {Status::OK(),
+       MakePoll(second, {"partial-1", "partial-2", "final"}, std::nullopt)});
   FlightCallOptions options;
   options.timeout = TimeoutDuration{0.25};
 
@@ -218,11 +236,9 @@ TEST(PollInfoOrchestrationTest, DeadlineDoesNotResetBetweenPolls) {
   FakePollInfoRpcClient client;
   const auto original = CommandDescriptor("CommandStatementQuery");
   const auto continuation = FlightDescriptor::Command("continuation");
-  client.polls.push_back(
-      {Status::OK(), MakePoll(original, "partial", continuation),
-       std::chrono::milliseconds(30)});
-  client.polls.push_back(
-      {Status::OK(), MakePoll(continuation, "wrong", std::nullopt)});
+  client.polls.push_back({Status::OK(), MakePoll(original, "partial", continuation),
+                          std::chrono::milliseconds(30)});
+  client.polls.push_back({Status::OK(), MakePoll(continuation, "wrong", std::nullopt)});
   FlightCallOptions options;
   options.timeout = TimeoutDuration{0.01};
 
@@ -240,8 +256,7 @@ TEST(PollInfoOrchestrationTest,
   FakePollInfoRpcClient client;
   const auto original = CommandDescriptor("CommandStatementQuery");
   const auto continuation = FlightDescriptor::Command("continuation");
-  client.polls.push_back(
-      {Status::OK(), MakePoll(original, "partial", continuation)});
+  client.polls.push_back({Status::OK(), MakePoll(original, "partial", continuation)});
   client.polls.push_back(
       {MakeFlightError(FlightStatusCode::TimedOut, "transport deadline"), nullptr});
 
@@ -258,8 +273,7 @@ TEST(PollInfoOrchestrationTest, CancellationAttemptsCancelFlightInfoWithLatestSt
   FakePollInfoRpcClient client;
   const auto original = CommandDescriptor("CommandStatementQuery");
   const auto continuation = FlightDescriptor::Command("continuation");
-  client.polls.push_back(
-      {Status::OK(), MakePoll(original, "cancellable", continuation)});
+  client.polls.push_back({Status::OK(), MakePoll(original, "cancellable", continuation)});
   client.polls.push_back({Status::Cancelled("active poll cancelled"), nullptr});
   client.on_poll = [stop_source](size_t call, const FlightCallOptions&) {
     if (call == 1) {
@@ -293,10 +307,10 @@ TEST(PollingFlightSqlClientTest, CachesUnsupportedByPhysicalClientAndFamily) {
 
   EXPECT_EQ(2U, fake->poll_count);
   EXPECT_EQ(2U, fake->get_count);
-  EXPECT_TRUE(client.IsUnsupportedForTesting(
-      internal::GetFlightSqlCommandFamily(direct)));
-  EXPECT_FALSE(client.IsUnsupportedForTesting(
-      internal::GetFlightSqlCommandFamily(metadata)));
+  EXPECT_TRUE(
+      client.IsUnsupportedForTesting(internal::GetFlightSqlCommandFamily(direct)));
+  EXPECT_FALSE(
+      client.IsUnsupportedForTesting(internal::GetFlightSqlCommandFamily(metadata)));
 }
 
 TEST(PollingFlightSqlClientTest, ConnectionOptOutSkipsPolling) {
@@ -307,6 +321,88 @@ TEST(PollingFlightSqlClientTest, ConnectionOptOutSkipsPolling) {
   ASSERT_OK(client.GetFlightInfo({}, CommandDescriptor("CommandStatementQuery")));
   EXPECT_EQ(0U, fake->poll_count);
   EXPECT_EQ(1U, fake->get_count);
+}
+
+TEST(PollingFlightSqlClientTest, ReturnsPublishedEndpointBeforePollingContinuation) {
+  auto rpc_client = std::make_unique<FakePollInfoRpcClient>();
+  auto* fake = rpc_client.get();
+  const auto original = CommandDescriptor("CommandStatementQuery");
+  const auto continuation = FlightDescriptor::Command("continuation");
+  fake->polls.push_back({Status::OK(), MakePoll(original, "published", continuation)});
+  fake->polls.push_back(
+      {Status::OK(),
+       MakePoll(continuation, std::vector<std::string>{"published", "final"},
+                std::nullopt)});
+  PollingFlightSqlClient client(std::move(rpc_client), true);
+
+  ASSERT_OK_AND_ASSIGN(auto first, client.GetFlightInfo({}, original));
+  ASSERT_EQ(1U, fake->poll_count);
+  ASSERT_EQ(1U, first->endpoints().size());
+  EXPECT_EQ("published", first->endpoints()[0].ticket.ticket);
+
+  auto operation = client.TakeProgressiveOperation();
+  ASSERT_NE(nullptr, operation);
+  ASSERT_OK_AND_ASSIGN(auto final_info, operation->PollNextAvailable());
+  ASSERT_EQ(2U, fake->poll_count);
+  ASSERT_EQ(2U, final_info->endpoints().size());
+  EXPECT_EQ("final", final_info->endpoints()[1].ticket.ticket);
+  EXPECT_TRUE(operation->is_complete());
+}
+
+TEST(PollingFlightSqlClientTest, LateFailureIsReturnedByNextDemandPoll) {
+  auto rpc_client = std::make_unique<FakePollInfoRpcClient>();
+  auto* fake = rpc_client.get();
+  const auto original = CommandDescriptor("CommandStatementQuery");
+  const auto continuation = FlightDescriptor::Command("continuation");
+  fake->polls.push_back({Status::OK(), MakePoll(original, "published", continuation)});
+  fake->polls.push_back({Status::IOError("late query failure"), nullptr});
+  PollingFlightSqlClient client(std::move(rpc_client), true);
+
+  ASSERT_OK(client.GetFlightInfo({}, original));
+  auto operation = client.TakeProgressiveOperation();
+  ASSERT_NE(nullptr, operation);
+  auto result = operation->PollNextAvailable();
+  EXPECT_RAISES_WITH_MESSAGE_THAT(IOError, ::testing::HasSubstr("late query failure"),
+                                  result.status());
+  EXPECT_EQ(0U, fake->get_count);
+  EXPECT_EQ(0U, fake->cancel_count);
+  EXPECT_TRUE(operation->is_complete());
+}
+
+TEST(PollingFlightSqlClientTest, RejectsMutationOfPublishedEndpointPrefix) {
+  auto rpc_client = std::make_unique<FakePollInfoRpcClient>();
+  auto* fake = rpc_client.get();
+  const auto original = CommandDescriptor("CommandStatementQuery");
+  const auto continuation = FlightDescriptor::Command("continuation");
+  fake->polls.push_back({Status::OK(), MakePoll(original, "published", continuation)});
+  fake->polls.push_back({Status::OK(), MakePoll(continuation, "mutated", std::nullopt)});
+  PollingFlightSqlClient client(std::move(rpc_client), true);
+
+  ASSERT_OK(client.GetFlightInfo({}, original));
+  auto operation = client.TakeProgressiveOperation();
+  ASSERT_NE(nullptr, operation);
+  auto result = operation->PollNextAvailable();
+  EXPECT_RAISES_WITH_MESSAGE_THAT(
+      Invalid, ::testing::HasSubstr("mutated previously published"), result.status());
+  EXPECT_TRUE(operation->is_complete());
+  EXPECT_EQ(0U, fake->get_count);
+}
+
+TEST(PollingFlightSqlClientTest, AbandonmentAttemptsCancellationOnce) {
+  auto rpc_client = std::make_unique<FakePollInfoRpcClient>();
+  auto* fake = rpc_client.get();
+  const auto original = CommandDescriptor("CommandStatementQuery");
+  const auto continuation = FlightDescriptor::Command("continuation");
+  fake->polls.push_back({Status::OK(), MakePoll(original, "published", continuation)});
+  PollingFlightSqlClient client(std::move(rpc_client), true);
+
+  ASSERT_OK(client.GetFlightInfo({}, original));
+  auto operation = client.TakeProgressiveOperation();
+  ASSERT_NE(nullptr, operation);
+  operation->Cancel();
+  operation->Cancel();
+  EXPECT_EQ(1U, fake->cancel_count);
+  EXPECT_EQ("published", fake->cancelled_ticket);
 }
 
 }  // namespace
