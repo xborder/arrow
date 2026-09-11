@@ -71,6 +71,73 @@ surface are unchanged.
 - `SQLCancelHandle` is not declared by the macOS iODBC headers used here and was
   not added; T9 uses the contract-permitted `SQLCancel` path.
 
+## Request flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor App as ODBC application
+    participant API as ODBC API entry points
+    participant Stmt as FlightSqlStatement / Connection
+    participant Helper as PollingFlightSqlClient + poll_info_internal
+    participant Transport as Flight gRPC transport
+    participant Server as Flight SQL server
+    participant Result as Existing ODBC result / DoGet path
+
+    App->>API: SQLExecDirect / SQLExecute / metadata call
+    API->>Stmt: BeginExecution with StopSource and one deadline
+    opt SQLExecDirectW
+        Stmt->>Server: Prepare
+        Server-->>Stmt: Prepared handle
+        Note over Stmt,Server: Upstream Prepare + ExecutePrepared behavior is retained
+    end
+    Note over App,API: Parameterized T3 stops earlier: SQLBindParameter returns IM001 upstream
+    alt UsePollInfo=false or family cached unsupported
+        Stmt->>Server: GetFlightInfo(original descriptor)
+        Server-->>Stmt: Final FlightInfo
+        Stmt->>Result: Final FlightInfo
+    else PollInfo enabled
+        Stmt->>Helper: Execute descriptor with remaining timeout
+        Helper->>Server: PollFlightInfo(original descriptor)
+        alt Initial response is UNIMPLEMENTED
+            Server-->>Helper: UNIMPLEMENTED
+            Helper->>Helper: Cache type URL as unsupported
+            Helper->>Server: GetFlightInfo(original descriptor)
+            Server-->>Helper: Final FlightInfo
+            Helper->>Result: Final FlightInfo
+        else Error other than initial UNIMPLEMENTED
+            Server-->>Helper: UNAVAILABLE / auth / query / continuation error
+            Helper-->>API: Propagate SQL error; no fallback
+            API-->>App: SQL_ERROR
+        else Polling accepted
+            Server-->>Helper: Cumulative PollInfo + continuation
+            loop While continuation exists
+                Helper->>Server: PollFlightInfo(continuation, decreasing deadline)
+                Server-->>Helper: New cumulative PollInfo + next continuation
+            end
+            alt Polling completes
+                Helper->>Result: Final cumulative FlightInfo only
+            else SQLCancel or timeout during active poll
+                App->>API: SQLCancel(statement)
+                API->>Stmt: Request StopSource without execute mutex
+                Stmt->>Transport: StopToken requests cancellation
+                Transport-->>Server: TryCancel active gRPC ClientContext
+                opt A cumulative FlightInfo is known
+                    Helper->>Server: CancelFlightInfo(latest info), fresh 1s context
+                end
+                API-->>App: SQL_ERROR / timeout diagnostic
+            end
+        end
+    end
+    opt Final FlightInfo was produced
+        Result->>Server: DoGet(final ticket)
+        Server-->>Result: Arrow record batches
+        Result-->>App: Existing ODBC columns and rows
+    end
+```
+
+The ODBC execution deadline decreases across polls. `SQLCancel` requests the statement StopSource without waiting for the execute mutex, the transport cancels the active gRPC context, and server cleanup uses a separate bounded context when cumulative information exists. T3 remains outside the flow because public parameter binding is absent upstream.
+
 ## T1-T10 result matrix
 
 | Test | Status | Executable result and shared-server counters |
