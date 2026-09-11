@@ -25,9 +25,23 @@ using arrow::Result;
 FlightStreamChunkBuffer::FlightStreamChunkBuffer(
     FlightSqlClient& flight_sql_client, const FlightClientOptions& client_options,
     const FlightCallOptions& call_options, const std::shared_ptr<FlightInfo>& flight_info,
-    size_t queue_capacity)
-    : queue_(queue_capacity) {
-  for (const auto& endpoint : flight_info->endpoints()) {
+    size_t queue_capacity,
+    std::shared_ptr<internal::ProgressivePollInfoOperation> poll_info_operation)
+    : flight_sql_client_(flight_sql_client),
+      client_options_(client_options),
+      call_options_(call_options),
+      poll_info_operation_(std::move(poll_info_operation)),
+      queue_(queue_capacity) {
+  AddEndpoints(*flight_info);
+}
+
+void FlightStreamChunkBuffer::AddEndpoints(const FlightInfo& flight_info) {
+  const auto& endpoints = flight_info.endpoints();
+  if (endpoints.size() < published_endpoint_count_) {
+    throw DriverException("PollInfo removed previously published endpoints");
+  }
+  for (size_t index = published_endpoint_count_; index < endpoints.size(); ++index) {
+    const auto& endpoint = endpoints[index];
     const Ticket& ticket = endpoint.ticket;
 
     arrow::Result<std::unique_ptr<FlightStreamReader>> result;
@@ -35,7 +49,7 @@ FlightStreamChunkBuffer::FlightStreamChunkBuffer(
     auto endpoint_locations = endpoint.locations;
     if (endpoint_locations.empty()) {
       // list of Locations needs to be empty to proceed
-      result = flight_sql_client.DoGet(call_options, ticket);
+      result = flight_sql_client_.DoGet(call_options_, ticket);
     } else {
       // If it is non-empty, the driver should create a FlightSqlClient to connect to one
       // of the specified Locations directly.
@@ -47,12 +61,12 @@ FlightStreamChunkBuffer::FlightStreamChunkBuffer(
       // connection's Location and skip creating a FlightClient in that scenario.
 
       std::unique_ptr<FlightClient> temp_flight_client;
-      util::ThrowIfNotOK(FlightClient::Connect(endpoint_locations[0], client_options)
+      util::ThrowIfNotOK(FlightClient::Connect(endpoint_locations[0], client_options_)
                              .Value(&temp_flight_client));
       temp_flight_sql_client =
           std::make_shared<FlightSqlClient>(std::move(temp_flight_client));
 
-      result = temp_flight_sql_client->DoGet(call_options, ticket);
+      result = temp_flight_sql_client->DoGet(call_options_, ticket);
     }
 
     util::ThrowIfNotOK(result.status());
@@ -79,25 +93,56 @@ FlightStreamChunkBuffer::FlightStreamChunkBuffer(
     };
     queue_.AddProducer(std::move(supplier));
   }
+  published_endpoint_count_ = endpoints.size();
 }
 
 bool FlightStreamChunkBuffer::GetNext(FlightStreamChunk* chunk) {
-  std::pair<Result<FlightStreamChunk>, std::shared_ptr<FlightSqlClient>>
-      closeable_endpoint_stream_pair;
-  if (!queue_.Pop(&closeable_endpoint_stream_pair)) {
-    return false;
-  }
+  while (true) {
+    std::pair<Result<FlightStreamChunk>, std::shared_ptr<FlightSqlClient>>
+        closeable_endpoint_stream_pair;
+    if (queue_.Pop(&closeable_endpoint_stream_pair)) {
+      Result<FlightStreamChunk> result = closeable_endpoint_stream_pair.first;
+      if (!result.status().ok()) {
+        Close();
+        throw DriverException(result.status().message());
+      }
+      *chunk = std::move(result.ValueOrDie());
+      return chunk->data != nullptr;
+    }
 
-  Result<FlightStreamChunk> result = closeable_endpoint_stream_pair.first;
-  if (!result.status().ok()) {
-    Close();
-    throw DriverException(result.status().message());
+    if (poll_info_operation_ == nullptr || poll_info_operation_->is_complete()) {
+      return false;
+    }
+
+    auto next_info = poll_info_operation_->PollNextAvailable();
+    if (!next_info.ok()) {
+      throw DriverException(next_info.status().ToString());
+    }
+
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (closed_) {
+      return false;
+    }
+    const size_t previous_endpoint_count = published_endpoint_count_;
+    AddEndpoints(**next_info);
+    if (published_endpoint_count_ == previous_endpoint_count &&
+        poll_info_operation_->is_complete()) {
+      return false;
+    }
   }
-  *chunk = std::move(result.ValueOrDie());
-  return chunk->data != nullptr;
 }
 
-void FlightStreamChunkBuffer::Close() { queue_.Close(); }
+void FlightStreamChunkBuffer::Close() {
+  if (poll_info_operation_ != nullptr) {
+    poll_info_operation_->Cancel();
+  }
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (closed_) {
+    return;
+  }
+  closed_ = true;
+  queue_.Close();
+}
 
 FlightStreamChunkBuffer::~FlightStreamChunkBuffer() { Close(); }
 

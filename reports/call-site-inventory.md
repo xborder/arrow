@@ -55,7 +55,8 @@ connection.
 
 ## Result path
 
-Only the final cumulative `FlightInfo` returned by the polling helper is handed
-to the existing `FlightSqlResultSet`.  The existing endpoint readers,
-`FlightStreamChunkBuffer`, accessors, and fetch APIs are unchanged.  Partial
-PollInfo endpoints are never passed to DoGet.
+The first cumulative `FlightInfo` with endpoints is handed to the existing
+`FlightSqlResultSet` immediately. `FlightStreamChunkBuffer` consumes its current
+endpoint queue, then asks the retained progressive operation for another poll.
+Only the appended endpoint suffix is queued. Public accessors and fetch APIs are
+unchanged.

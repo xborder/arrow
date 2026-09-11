@@ -20,6 +20,8 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "arrow/flight/client.h"
@@ -41,20 +43,28 @@ class PollingFlightSqlClient : public FlightSqlClient {
                          bool polling_enabled);
 
   arrow::Result<std::unique_ptr<FlightInfo>> GetFlightInfo(
-      const FlightCallOptions& options,
-      const FlightDescriptor& descriptor) override;
+      const FlightCallOptions& options, const FlightDescriptor& descriptor) override;
+
+  /// Transfer the progressive operation created by the most recent FlightInfo
+  /// request on this thread to the result reader.
+  std::shared_ptr<internal::ProgressivePollInfoOperation> TakeProgressiveOperation();
 
   bool IsUnsupportedForTesting(const std::string& family) const;
 
  private:
   bool IsUnsupported(const std::string& family) const;
   void MarkUnsupported(const std::string& family);
+  void SetProgressiveOperation(
+      std::shared_ptr<internal::ProgressivePollInfoOperation> operation);
 
   std::shared_ptr<FlightClient> flight_client_;
   std::unique_ptr<internal::PollInfoRpcClient> rpc_client_;
   bool polling_enabled_;
   mutable std::mutex mutex_;
   std::unordered_set<std::string> unsupported_families_;
+  std::unordered_map<std::thread::id,
+                     std::shared_ptr<internal::ProgressivePollInfoOperation>>
+      progressive_operations_;
 };
 
 }  // namespace arrow::flight::sql::odbc

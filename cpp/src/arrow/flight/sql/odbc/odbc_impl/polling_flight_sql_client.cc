@@ -25,8 +25,8 @@ PollingFlightSqlClient::PollingFlightSqlClient(std::shared_ptr<FlightClient> cli
                                                bool polling_enabled)
     : FlightSqlClient(client),
       flight_client_(std::move(client)),
-      rpc_client_(
-          std::make_unique<internal::FlightClientPollInfoRpcClient>(flight_client_.get())),
+      rpc_client_(std::make_unique<internal::FlightClientPollInfoRpcClient>(
+          flight_client_.get())),
       polling_enabled_(polling_enabled) {}
 
 PollingFlightSqlClient::PollingFlightSqlClient(
@@ -37,17 +37,34 @@ PollingFlightSqlClient::PollingFlightSqlClient(
 
 arrow::Result<std::unique_ptr<FlightInfo>> PollingFlightSqlClient::GetFlightInfo(
     const FlightCallOptions& options, const FlightDescriptor& descriptor) {
+  SetProgressiveOperation(nullptr);
   const std::string family = internal::GetFlightSqlCommandFamily(descriptor);
   if (!polling_enabled_ || IsUnsupported(family)) {
     return rpc_client_->GetFlightInfo(options, descriptor);
   }
 
+  auto operation = std::make_shared<internal::ProgressivePollInfoOperation>(
+      rpc_client_.get(), options, descriptor);
   bool initial_poll_unimplemented = false;
-  auto result = internal::PollFlightInfoUntilComplete(
-      rpc_client_.get(), options, descriptor, &initial_poll_unimplemented);
+  auto result = operation->Start(&initial_poll_unimplemented);
   if (initial_poll_unimplemented) {
     MarkUnsupported(family);
   }
+  if (result.ok() && !operation->is_complete()) {
+    SetProgressiveOperation(std::move(operation));
+  }
+  return result;
+}
+
+std::shared_ptr<internal::ProgressivePollInfoOperation>
+PollingFlightSqlClient::TakeProgressiveOperation() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto operation = progressive_operations_.find(std::this_thread::get_id());
+  if (operation == progressive_operations_.end()) {
+    return nullptr;
+  }
+  auto result = std::move(operation->second);
+  progressive_operations_.erase(operation);
   return result;
 }
 
@@ -61,8 +78,18 @@ void PollingFlightSqlClient::MarkUnsupported(const std::string& family) {
   unsupported_families_.insert(family);
 }
 
-bool PollingFlightSqlClient::IsUnsupportedForTesting(
-    const std::string& family) const {
+void PollingFlightSqlClient::SetProgressiveOperation(
+    std::shared_ptr<internal::ProgressivePollInfoOperation> operation) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto thread = std::this_thread::get_id();
+  if (operation == nullptr) {
+    progressive_operations_.erase(thread);
+  } else {
+    progressive_operations_[thread] = std::move(operation);
+  }
+}
+
+bool PollingFlightSqlClient::IsUnsupportedForTesting(const std::string& family) const {
   return IsUnsupported(family);
 }
 
