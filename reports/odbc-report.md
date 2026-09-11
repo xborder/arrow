@@ -114,7 +114,7 @@ The execution deadline decreases across polls. A late continuation failure becom
 | T7 ambiguous failure | PASS | Prepared UNAVAILABLE becomes `SQL_ERROR`; `poll=1,get=0,original=1,do_get=0`. |
 | T8 timeout | PASS | 1-second attribute returned in 1021ms; `poll=1,get=0,active_call_terminations=1`; focused multi-continuation tests prove decreasing/no-reset deadline and cancel-on-partial timeout. |
 | T9 cancellation and close | PASS | `SQLCancel` interrupts a blocked `SQLFetch`; `SQLCloseCursor` after the first endpoint attempts one `CancelFlightInfo`; delivered rows remain valid. |
-| T10 regression | PASS | Build succeeded; focused progressive PollInfo selection 17/17; shared selection 11/11; prior broader SPI and transport regressions remain green. |
+| T10 regression | PASS | Build succeeded; focused progressive PollInfo selection 17/17; shared selection 11/11; final ODBC SPI 101/101. |
 
 The three full ODBC failures are
 `ConnectionInfoTest/0.TestSQLGetInfoDriverHdbc`, `...DriverHenv`, and
