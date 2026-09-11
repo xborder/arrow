@@ -107,7 +107,7 @@ sequenceDiagram
             Helper->>Result: Final FlightInfo
         else Error other than initial UNIMPLEMENTED
             Server-->>Helper: UNAVAILABLE / auth / query / continuation error
-            Helper-->>API: Propagate SQL error; no fallback
+            Helper-->>API: Propagate SQL error, no fallback
             API-->>App: SQL_ERROR
         else Polling accepted
             Server-->>Helper: Cumulative PollInfo + continuation
