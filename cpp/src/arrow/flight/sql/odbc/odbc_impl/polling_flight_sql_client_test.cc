@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -31,7 +32,11 @@
 
 #include <google/protobuf/any.pb.h>
 
+#include "arrow/array/array_primitive.h"
+#include "arrow/array/builder_primitive.h"
 #include "arrow/flight/sql/poll_info_internal.h"
+#include "arrow/record_batch.h"
+#include "arrow/table.h"
 #include "arrow/testing/gtest_util.h"
 #include "arrow/type.h"
 #include "arrow/util/cancel.h"
@@ -403,6 +408,58 @@ TEST(PollingFlightSqlClientTest, AbandonmentAttemptsCancellationOnce) {
   operation->Cancel();
   EXPECT_EQ(1U, fake->cancel_count);
   EXPECT_EQ("published", fake->cancelled_ticket);
+}
+
+// T3 surrogate against the shared conformance server.  Public ODBC parameter binding
+// is absent upstream (no SQLBindParameter), so this drives the C++ Flight SQL layer
+// the driver uses: PreparedStatement::Execute binds once, then dispatches through the
+// polling GetFlightInfo.  The runner asserts parameter_binding == 1 and
+// original_descriptors == 1 from the server's /state.
+TEST(PollingFlightSqlClientSharedFixtureTest, PreparedParametersBindOnceBeforePolling) {
+  const char* port = std::getenv("BDX645_CONFORMANCE_PORT");
+  if (port == nullptr) {
+    GTEST_SKIP() << "Set BDX645_CONFORMANCE_PORT to run shared-fixture tests";
+  }
+  ASSERT_OK_AND_ASSIGN(auto location,
+                       Location::ForGrpcTcp("127.0.0.1", std::stoi(port)));
+  ASSERT_OK_AND_ASSIGN(auto flight_client, FlightClient::Connect(location));
+  std::shared_ptr<FlightClient> shared_client = std::move(flight_client);
+  PollingFlightSqlClient client(shared_client, true);
+  FlightCallOptions options;
+
+  ASSERT_OK_AND_ASSIGN(auto prepared, client.Prepare(options, "prepared-multi-step"));
+  Int64Builder builder;
+  ASSERT_OK(builder.Append(41));
+  ASSERT_OK_AND_ASSIGN(auto parameter, builder.Finish());
+  auto parameter_schema = arrow::schema({arrow::field("value", arrow::int64(), false)});
+  ASSERT_OK(prepared->SetParameters(RecordBatch::Make(parameter_schema, 1, {parameter})));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<FlightInfo> info, prepared->Execute(options));
+  auto operation = client.TakeProgressiveOperation();
+
+  std::vector<int64_t> values;
+  size_t consumed = 0;
+  auto read_new_endpoints = [&](const FlightInfo& cumulative) {
+    for (; consumed < cumulative.endpoints().size(); ++consumed) {
+      ASSERT_OK_AND_ASSIGN(auto reader,
+                           client.DoGet(options, cumulative.endpoints()[consumed].ticket));
+      ASSERT_OK_AND_ASSIGN(auto table, reader->ToTable());
+      auto column = table->GetColumnByName("value");
+      ASSERT_NE(nullptr, column);
+      for (const auto& chunk : column->chunks()) {
+        const auto& ints = static_cast<const Int64Array&>(*chunk);
+        for (int64_t i = 0; i < ints.length(); ++i) values.push_back(ints.Value(i));
+      }
+    }
+  };
+  read_new_endpoints(*info);
+  while (operation != nullptr && !operation->is_complete()) {
+    ASSERT_OK_AND_ASSIGN(info, operation->PollNextAvailable());
+    read_new_endpoints(*info);
+  }
+
+  EXPECT_EQ((std::vector<int64_t>{41, 42}), values);
+  ASSERT_OK(prepared->Close(options));
 }
 
 }  // namespace
