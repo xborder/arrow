@@ -16,6 +16,16 @@ to prove the contract's one-bind T3 requirement even though the underlying C++
 `PreparedStatement::Execute` binds its optional RecordBatch exactly once before
 the now-virtual `GetFlightInfo` dispatch.
 
+## Update 2026-11-25
+
+The branch is rebased onto upstream `ca39779fae`, and the matrix was rerun with
+the same results. A new C++-layer T3 surrogate passes and shows that a bound
+prepared statement binds once, before the first poll. The production go/no-go,
+the T3 decision and the follow-ups are in
+`reports/odbc-production-recommendation.md`. The rerun evidence is in
+`reports/raw/rebase-2026-11-25.log`. The rest of this report describes the
+original September run against `79e074ace3`.
+
 ## Repository and baseline
 
 - Repository: `/Users/helder/Documents/Codex/2026-09-10/bdx-645-pollinfo-orchestrator/workstreams/arrow`
@@ -212,6 +222,8 @@ are additional deliverables, not runtime source.
 
 ## Deliverables
 
+- `reports/odbc-production-recommendation.md` (2026-11-25)
+- `reports/raw/rebase-2026-11-25.log` (2026-11-25)
 - `reports/call-site-inventory.md`
 - `reports/evidence.jsonl`
 - `reports/raw/initial-and-baseline.log`
