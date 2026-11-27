@@ -35,6 +35,7 @@ class FlightSqlResultSetColumn;
 class FlightSqlResultSet : public ResultSet {
  private:
   const MetadataSettings& metadata_settings_;
+  std::shared_ptr<internal::ProgressivePollInfoOperation> poll_info_operation_;
   FlightStreamChunkBuffer chunk_buffer_;
   FlightStreamChunk current_chunk_;
   std::shared_ptr<Schema> schema_;

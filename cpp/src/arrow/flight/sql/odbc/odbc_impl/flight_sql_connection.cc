@@ -24,6 +24,7 @@
 #include "arrow/flight/sql/odbc/odbc_impl/flight_sql_auth_method.h"
 #include "arrow/flight/sql/odbc/odbc_impl/flight_sql_ssl_config.h"
 #include "arrow/flight/sql/odbc/odbc_impl/flight_sql_statement.h"
+#include "arrow/flight/sql/odbc/odbc_impl/polling_flight_sql_client.h"
 #include "arrow/flight/sql/odbc/odbc_impl/util.h"
 #include "arrow/flight/types.h"
 
@@ -65,7 +66,8 @@ const std::vector<std::string_view> FlightSqlConnection::ALL_KEYS = {
     FlightSqlConnection::DISABLE_CERTIFICATE_VERIFICATION,
     FlightSqlConnection::STRING_COLUMN_LENGTH,
     FlightSqlConnection::USE_WIDE_CHAR,
-    FlightSqlConnection::CHUNK_BUFFER_CAPACITY};
+    FlightSqlConnection::CHUNK_BUFFER_CAPACITY,
+    FlightSqlConnection::USE_POLL_INFO};
 
 namespace {
 
@@ -115,7 +117,8 @@ const std::set<std::string_view, CaseInsensitiveComparator> BUILT_IN_PROPERTIES 
     FlightSqlConnection::TRUSTED_CERTS,
     FlightSqlConnection::USE_SYSTEM_TRUST_STORE,
     FlightSqlConnection::STRING_COLUMN_LENGTH,
-    FlightSqlConnection::USE_WIDE_CHAR};
+    FlightSqlConnection::USE_WIDE_CHAR,
+    FlightSqlConnection::USE_POLL_INFO};
 
 Connection::ConnPropertyMap::const_iterator TrackMissingRequiredProperty(
     std::string_view property, const Connection::ConnPropertyMap& properties,
@@ -167,7 +170,9 @@ void FlightSqlConnection::Connect(const ConnPropertyMap& properties,
         FlightSqlAuthMethod::FromProperties(flight_client, properties);
     auth_method->Authenticate(*this, call_options_);
 
-    sql_client_.reset(new FlightSqlClient(std::move(flight_client)));
+    auto shared_flight_client = std::shared_ptr<FlightClient>(std::move(flight_client));
+    sql_client_ = std::make_unique<PollingFlightSqlClient>(
+        std::move(shared_flight_client), GetUsePollInfo(properties));
     closed_ = false;
 
     // Note: This should likely come from Flight instead of being from the
@@ -236,6 +241,11 @@ size_t FlightSqlConnection::GetChunkBufferCapacity(
   }
 
   return default_value;
+}
+
+bool FlightSqlConnection::GetUsePollInfo(
+    const ConnPropertyMap& conn_property_map) {
+  return AsBool(conn_property_map, FlightSqlConnection::USE_POLL_INFO).value_or(true);
 }
 
 const FlightCallOptions& FlightSqlConnection::PopulateCallOptions(

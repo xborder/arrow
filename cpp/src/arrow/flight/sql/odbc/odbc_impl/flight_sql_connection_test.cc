@@ -100,6 +100,19 @@ TEST(MetadataSettingsTest, UseWideCharTest) {
   connection.Close();
 }
 
+TEST(PollInfoSettingsTest, DefaultsOnAndSupportsConnectionOptOut) {
+  FlightSqlConnection connection(OdbcVersion::V_3);
+  connection.SetClosed(false);
+  const Connection::ConnPropertyMap defaults;
+  const Connection::ConnPropertyMap disabled = {
+      {std::string(FlightSqlConnection::USE_POLL_INFO), "false"},
+  };
+
+  EXPECT_TRUE(connection.GetUsePollInfo(defaults));
+  EXPECT_FALSE(connection.GetUsePollInfo(disabled));
+  connection.Close();
+}
+
 TEST(BuildLocationTests, ForTcp) {
   std::vector<std::string_view> missing_attr;
   Connection::ConnPropertyMap properties = {

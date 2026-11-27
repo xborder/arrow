@@ -1,0 +1,83 @@
+BDX-645 ODBC revalidation after rebase onto upstream ca39779fae (2026-11-25)
+Branch head under test: e7b2c97c53
+
+Build: cmake --build build-bdx645 --target arrow-odbc-spi-impl-test arrow-flight-test arrow-flight-sql-odbc-test -j 12 -> exit 0
+  (Debug, ARROW_DEPENDENCY_SOURCE=BUNDLED, BUILD_WARNING_LEVEL=PRODUCTION; see notes below)
+
+Focused: arrow-odbc-spi-impl-test --gtest_filter=PollInfoOrchestrationTest.*:PollingFlightSqlClientTest.*:PollingFlightSqlClientSharedFixtureTest.*:FlightSqlStatementPollingTest.*:PollInfoSettingsTest.*
+  [  SKIPPED ] PollingFlightSqlClientSharedFixtureTest.PreparedParametersBindOnceBeforePolling (0 ms)
+  [  SKIPPED ] 1 test, listed below:
+  (the skipped case is the gated shared-fixture T3 surrogate; it runs below)
+
+Transport: arrow-flight-test --gtest_filter=TestCancel.PollFlightInfoWhileBlocked
+  [  PASSED  ] 1 test.
+
+Full SPI: arrow-odbc-spi-impl-test --gtest_brief=1 -> exit 0
+  [  SKIPPED ] 1 test.
+
+Full ODBC: ODBCINSTINI=build-bdx645/odbcinst.ini arrow-flight-sql-odbc-test --gtest_brief=1 -> exit 1
+  [==========] 714 tests from 47 test suites ran. (472 ms total)
+  [  PASSED  ] 385 tests.
+  [  SKIPPED ] 326 tests.
+    YOU HAVE 15 DISABLED TESTS
+  [  FAILED  ] ConnectionInfoTest/0.TestSQLGetInfoDriverHdbc
+  [  FAILED  ] ConnectionInfoTest/0.TestSQLGetInfoDriverHenv
+  [  FAILED  ] ConnectionInfoTest/0.TestSQLGetInfoDriverHlib
+  The 3 failures are the pre-existing Driver-Manager-only cases (unchanged by this patch).
+
+Shared fixture: conformance-server built from dremio-employees/helder.gregorio#7 head 72e413a
+  conformance-server -flight-addr 127.0.0.1:31347 -control-addr 127.0.0.1:31348; POST /reset before each case
+server sha256: 1e945c3f5be519560217fe56a7651eebf8a66e6cbe63672dd2e8b88e3d5dd7c6
+T1 Immediate: PASS 819ms
+  counters: {"poll_flight_info":1,"get_flight_info":0,"parameter_binding":0,"original_descriptors":1,"continuation_descriptors":0,"do_get":1,"cancellation":0,"active_call_terminations":0}
+  order: PollFlightInfo, DoGet
+T2 MultiStepProgressiveFetch: PASS 810ms
+  counters: {"poll_flight_info":3,"get_flight_info":0,"parameter_binding":0,"original_descriptors":1,"continuation_descriptors":2,"do_get":3,"cancellation":0,"active_call_terminations":0}
+  order: PollFlightInfo, DoGet, PollFlightInfo, DoGet, PollFlightInfo, DoGet
+T3 PreparedBindsOnce: FAIL(rc=1) 790ms
+  counters: {"poll_flight_info":0,"get_flight_info":0,"parameter_binding":0,"original_descriptors":0,"continuation_descriptors":0,"do_get":0,"cancellation":0,"active_call_terminations":0}
+  order: (none)
+  cpp/src/arrow/flight/sql/odbc/tests/poll_info_conformance_test.cc:164: Failure
+  Expected: true
+  SQLBindParameter returned -1; diagnostic_status=0; SQLSTATE=IM001; native_error=0; message=[iODBC][Driver Manager]Driver does not support this function
+T4 MetadataCatalogs: PASS 816ms
+  counters: {"poll_flight_info":3,"get_flight_info":0,"parameter_binding":0,"original_descriptors":1,"continuation_descriptors":2,"do_get":1,"cancellation":0,"active_call_terminations":0}
+  order: PollFlightInfo, PollFlightInfo, PollFlightInfo, DoGet
+T5 UnsupportedCacheAndDifferentFamily: PASS 821ms
+  counters: {"poll_flight_info":4,"get_flight_info":2,"parameter_binding":0,"original_descriptors":2,"continuation_descriptors":2,"do_get":3,"cancellation":0,"active_call_terminations":0}
+  order: PollFlightInfo, GetFlightInfo, DoGet, GetFlightInfo, DoGet, PollFlightInfo, PollFlightInfo, PollFlightInfo, DoGet
+T6 ConnectionOptOut: PASS 817ms
+  counters: {"poll_flight_info":0,"get_flight_info":1,"parameter_binding":0,"original_descriptors":0,"continuation_descriptors":0,"do_get":1,"cancellation":0,"active_call_terminations":0}
+  order: GetFlightInfo, DoGet
+T7 UnavailableDoesNotFallback: PASS 811ms
+  counters: {"poll_flight_info":1,"get_flight_info":0,"parameter_binding":0,"original_descriptors":1,"continuation_descriptors":0,"do_get":0,"cancellation":0,"active_call_terminations":0}
+  order: PollFlightInfo
+T7 LateErrorSurfacesAtNextFetch: PASS 812ms
+  counters: {"poll_flight_info":2,"get_flight_info":0,"parameter_binding":0,"original_descriptors":1,"continuation_descriptors":1,"do_get":1,"cancellation":0,"active_call_terminations":0}
+  order: PollFlightInfo, DoGet, PollFlightInfo
+T8 QueryTimeoutInterruptsBlockedPoll: PASS 1813ms
+  counters: {"poll_flight_info":1,"get_flight_info":0,"parameter_binding":0,"original_descriptors":1,"continuation_descriptors":0,"do_get":0,"cancellation":0,"active_call_terminations":1}
+  order: PollFlightInfo
+T9 SQLCancelInterruptsBeforeResultSet: PASS 1067ms
+  counters: {"poll_flight_info":1,"get_flight_info":0,"parameter_binding":0,"original_descriptors":1,"continuation_descriptors":0,"do_get":0,"cancellation":0,"active_call_terminations":1}
+  order: PollFlightInfo
+T9 SQLCancelInterruptsBlockingFetch: PASS 1073ms
+  counters: {"poll_flight_info":2,"get_flight_info":0,"parameter_binding":0,"original_descriptors":1,"continuation_descriptors":1,"do_get":1,"cancellation":1,"active_call_terminations":1}
+  order: PollFlightInfo, DoGet, PollFlightInfo, CancelFlightInfo
+T9 CloseIncompleteResultAttemptsCancellation: PASS 796ms
+  counters: {"poll_flight_info":1,"get_flight_info":0,"parameter_binding":0,"original_descriptors":1,"continuation_descriptors":0,"do_get":1,"cancellation":1,"active_call_terminations":0}
+  order: PollFlightInfo, DoGet, CancelFlightInfo
+shared: 11 passed, 1 failed
+T3S PreparedParametersBindOnceBeforePolling (C++ layer): PASS
+  counters: {"poll_flight_info":3,"get_flight_info":0,"parameter_binding":1,"original_descriptors":1,"continuation_descriptors":2,"do_get":2,"cancellation":0}
+  order: DoPutPreparedStatementQuery, PollFlightInfo, DoGet, PollFlightInfo, DoGet, PollFlightInfo
+
+Build-environment notes (not part of the Arrow patch):
+  The host's /usr/local/include holds x86_64 Homebrew protobuf 29.3, abseil, c-ares and utf8_range
+  headers, and Apple clang searches it ahead of the bundled -isystem dirs. The existing
+  build-bdx645 hermetic -I overrides were extended for the newer bundled protobuf: upb,
+  upb_generator, utf8_range.h, utf8_validity.h and ares*.h now point at the bundled sources, and
+  hermetic-upb holds per-file links to protobuf-src/upb/reflection/cmake (a directory symlink was
+  deduplicated against the -isystem entry and lost precedence). With gRPC headers on -I, the newer
+  gRPC triggers -Wdocumentation and deprecation warnings, so the build uses
+  BUILD_WARNING_LEVEL=PRODUCTION instead of -Werror.

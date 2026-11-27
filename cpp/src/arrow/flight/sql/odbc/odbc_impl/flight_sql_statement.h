@@ -25,7 +25,9 @@
 #include "arrow/flight/api.h"
 #include "arrow/flight/sql/api.h"
 #include "arrow/flight/types.h"
+#include "arrow/util/cancel.h"
 
+#include <mutex>
 #include <optional>
 
 namespace arrow::flight::sql::odbc {
@@ -40,6 +42,11 @@ class FlightSqlStatement : public Statement {
   std::shared_ptr<ResultSet> current_result_set_;
   std::shared_ptr<PreparedStatement> prepared_statement_;
   const MetadataSettings& metadata_settings_;
+  StopSource execution_stop_source_;
+  mutable std::mutex execution_state_mutex_;
+
+  void BeginExecution();
+  void SetCurrentResultSet(std::shared_ptr<ResultSet> result_set);
 
   std::shared_ptr<ResultSet> GetTables(const std::string* catalog_name,
                                        const std::string* schema_name,
